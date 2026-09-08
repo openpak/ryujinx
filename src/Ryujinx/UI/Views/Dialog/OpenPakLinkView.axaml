@@ -10,16 +10,18 @@
             TextWrapping="Wrap"
             Text="{ext:Locale MenuBar_OpenPak_LinkScan}" />
         <Grid ColumnDefinitions="Auto,*" ColumnSpacing="24">
-            <StackPanel Grid.Column="0" Spacing="8" HorizontalAlignment="Center">
+            <StackPanel Name="PhonePanel" Grid.Column="0" Spacing="8" HorizontalAlignment="Center">
                 <Border Background="White" Padding="8" CornerRadius="4">
                     <Image Name="QrImage" Width="168" Height="168" />
                 </Border>
+                <!-- Hidden until a phone has signed in: a photograph of this screen must not be
+                     worth anything on its own. -->
                 <TextBlock
                     Name="CodeText"
                     FontSize="26"
                     FontWeight="Bold"
                     HorizontalAlignment="Center"
-                    Text="- - -  - - -" />
+                    IsVisible="False" />
             </StackPanel>
             <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Center">
                 <TextBlock Text="{ext:Locale MenuBar_OpenPak_LinkOr}" FontWeight="Bold" />

@@ -212,19 +212,20 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         /// <summary>
         /// Bind this install to an OpenPak account through the host's browser.
         ///
-        /// A console does this across two devices: it shows a QR and a six-digit code, a phone
-        /// signs in and types the code back, and the person at the console approves. On a PC both
-        /// screens are the same screen, so the shape changes — the emulator opens the sign-in page
-        /// in the host's own browser and approves here — but the code still travels the short way,
-        /// from this window to that page, by hand.
+        /// A console links across two devices: it shows a QR and a six-digit code, a phone signs in
+        /// and types the code back, and the person at the console approves. All of that exists
+        /// because a console cannot receive anything from the browser doing the signing in.
         ///
-        /// It is not put in the url that opens. That is the entire guard: a code carried by a link
-        /// is carried just as well by a phishing link, and the final approval cannot catch it,
-        /// because the side that approves is whichever client started the link.
+        /// A PC can. The emulator listens on a loopback port, hands that address to OpenPak as the
+        /// place to come back to, and opens the sign-in page in the host's own browser — OpenPak's
+        /// address, never a redirected Nintendo hostname, since those resolve for the guest and
+        /// nothing else. Signing in redirects the browser onto that port with an authorization
+        /// code, which is traded here for the token that binds the account. No code to read out, no
+        /// code to type, and nothing polled.
         ///
-        /// <paramref name="onReady"/> receives the code to show and the page to open.
+        /// <paramref name="openBrowser"/> receives the page to open.
         /// </summary>
-        public async Task<bool> LinkAsync(Action<string, string> onReady, CancellationToken cancellationToken)
+        public async Task<bool> LinkAsync(Action<string> openBrowser, CancellationToken cancellationToken)
         {
             if (!Enabled)
             {
@@ -237,25 +238,33 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             {
                 _http ??= Server.CreateClient();
 
-                string query = $"response_type=code&client_id={BaasClientId}&redirect_uri={Uri.EscapeDataString(LinkRedirect)}";
+                // Bound before the browser is sent anywhere: the port has to exist to be named, and
+                // holding the socket is what stops anything else on this machine from taking it.
+                using LoopbackCallback callback = new();
 
-                using JsonDocument start = await PostAsync($"https://{NaHost}/connect/1.0.0/qr/new?{query}",
-                    null, null, cancellationToken);
+                // Proves the redirect that arrives is the one this flow asked for.
+                string state = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
 
-                string code = start.RootElement.GetProperty("code").GetString();
+                string authorize = $"{Server.AccountsPage(NaHost)}/connect/1.0.0/authorize" +
+                    $"?response_type=code&client_id={BaasClientId}" +
+                    $"&redirect_uri={Uri.EscapeDataString(callback.Address)}&state={state}";
 
-                onReady(code, Server.LinkPage(start.RootElement.GetProperty("link_url").GetString()));
+                openBrowser(authorize);
 
-                string accountIdToken = await AwaitApprovalAsync(code, cancellationToken);
+                string code = await callback.WaitForCodeAsync(state, cancellationToken);
 
-                if (accountIdToken == null)
+                if (code == null)
                 {
                     return false;
                 }
 
+                using JsonDocument token = await PostAsync($"https://{NaHost}/connect/1.0.0/api/token",
+                    Form(("code", code), ("client_id", BaasClientId), ("grant_type", "authorization_code")),
+                    null, cancellationToken);
+
                 // Federation is the login that also binds, so this replaces the cached token with
                 // one that carries the account.
-                await LoginAsync(accountIdToken, cancellationToken);
+                await LoginAsync(token.RootElement.GetProperty("id_token").GetString(), cancellationToken);
 
                 return IsLinked;
             }
@@ -269,75 +278,6 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             {
                 _gate.Release();
             }
-        }
-
-        /// <summary>
-        /// Wait for someone to sign in and type the code, approve it here, and trade the result for
-        /// a Nintendo Account id_token. Null if it was denied, expired, or cancelled.
-        /// </summary>
-        private async Task<string> AwaitApprovalAsync(string code, CancellationToken cancellationToken)
-        {
-            while (true)
-            {
-                using JsonDocument state = await GetAsync($"https://{NaHost}/connect/1.0.0/qr/state?c={code}", cancellationToken);
-
-                switch (state.RootElement.GetProperty("state").GetString())
-                {
-                    case "claimed":
-                        using (JsonDocument approved = await PostAsync($"https://{NaHost}/connect/1.0.0/qr/approve?c={code}",
-                            null, null, cancellationToken))
-                        {
-                            string authorizationCode = CodeFromRedirect(approved.RootElement.GetProperty("redirect").GetString());
-
-                            using JsonDocument token = await PostAsync($"https://{NaHost}/connect/1.0.0/api/token",
-                                Form(("code", authorizationCode), ("client_id", BaasClientId),
-                                    ("grant_type", "authorization_code")), null, cancellationToken);
-
-                            return token.RootElement.GetProperty("id_token").GetString();
-                        }
-
-                    case "denied":
-                    case "expired":
-                        Logger.Info?.Print(LogClass.ServiceAcc, "[OpenPak] The link was refused or ran out of time.");
-
-                        return null;
-
-                    default:
-                        // waiting, or signed in and not yet confirmed: the person is still typing.
-                        await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
-
-                        break;
-                }
-            }
-        }
-
-        /// <summary>The approval hands back the redirect the console would have followed.</summary>
-        private static string CodeFromRedirect(string redirect)
-        {
-            foreach (string part in redirect.AsSpan()[(redirect.IndexOfAny(['?', '#']) + 1)..].ToString().Split('&'))
-            {
-                string[] pair = part.Split('=', 2);
-
-                if (pair.Length == 2 && (pair[0] == "code" || pair[0] == "session_token_code"))
-                {
-                    return Uri.UnescapeDataString(pair[1]);
-                }
-            }
-
-            throw new InvalidOperationException($"the approval redirect carried no code: {redirect}");
-        }
-
-        private async Task<JsonDocument> GetAsync(string url, CancellationToken cancellationToken)
-        {
-            using HttpResponseMessage response = await _http.GetAsync(url, cancellationToken);
-            string body = await response.Content.ReadAsStringAsync(cancellationToken);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new HttpRequestException($"GET {url} returned {(int)response.StatusCode}: {body}");
-            }
-
-            return JsonDocument.Parse(body);
         }
 
         private async Task<JsonDocument> PostAsync(string url, HttpContent content, string bearer, CancellationToken cancellationToken)

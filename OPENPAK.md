@@ -64,18 +64,21 @@ The device account and the client certificate are kept per server under `<data d
 ## Linking, and why it is not the console's flow
 
 A console links across two devices: it shows a QR and a six-digit code, a phone signs in and
-types the code back, and the person at the console approves. The reasoning is that scanning a
-square proves you have a phone, not that you are sitting in front of that console.
+types the code back, and the person at the console approves. All of that exists because a
+console cannot receive anything from the browser that does the signing in.
 
-On a PC both screens are the same screen. The emulator opens OpenPak's sign-in page in the
-host's own browser — *not* one of the redirected Nintendo hostnames, which only resolve for the
-guest — shows the code in its own window, and approves there. What does not change is that the
-code travels by hand: a code carried in the url would be carried just as well by a link someone
-sends you, and the approval cannot catch that, because the side that approves is whichever
-client started the link.
+A PC can. The emulator binds a loopback port, hands that address to OpenPak as the way back, and
+opens the sign-in page in the host's own browser — OpenPak's address, never one of the
+redirected Nintendo hostnames, which resolve for the guest and nothing else. Signing in
+redirects the browser onto that port with an authorization code, which is traded for the token
+that binds the account. No code to read out, no code to type, nothing polled, and the password
+is only ever typed into OpenPak's own page.
 
-`OPENPAK_WEBSITE` names the address a browser on this machine can reach, for deployments whose
-server does not already set its own `NX_LINK_BASE_URL`.
+The state parameter is checked on the way back, because anything on this machine can reach a
+loopback port. The server needed no change for any of it: its authorize endpoint already
+redirects wherever the request asks.
+
+`OPENPAK_WEBSITE` names the address a browser on this machine can reach.
 
 ## Status
 

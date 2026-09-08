@@ -455,27 +455,13 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             {
                 while (true)
                 {
-                    // Well inside the lease the server hands out, so one lost request is not a
-                    // person blinking offline.
-                    await Task.Delay(TimeSpan.FromSeconds(25));
+                    // Three times inside the lease the server hands out, so one lost request is
+                    // not a person blinking offline.
+                    await Task.Delay(TimeSpan.FromSeconds(10));
 
                     try
                     {
-                        using HttpRequestMessage request = new(HttpMethod.Patch,
-                            $"https://{BaasHost}/1.0.0/users/{_userId}/device_accounts/{_device.Id}")
-                        {
-                            Content = new StringContent(
-                                """[{"op":"replace","path":"/presence/state","value":"ONLINE"}]""",
-                                Encoding.UTF8, "application/json"),
-                        };
-
-                        using HttpResponseMessage response = await _http.SendAsync(request);
-
-                        if (!response.IsSuccessStatusCode)
-                        {
-                            Logger.Debug?.Print(LogClass.ServiceAcc,
-                                $"[OpenPak] Presence update returned {(int)response.StatusCode}");
-                        }
+                        await PresenceAsync("ONLINE", CancellationToken.None);
                     }
                     catch (Exception exception)
                     {
@@ -485,6 +471,49 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                     }
                 }
             });
+        }
+
+        /// <summary>
+        /// Say we are going, so the account drops offline now rather than when the lease runs out.
+        /// Best effort and briefly: a person closing a window should not wait on a network call,
+        /// and if this never arrives the lease says the same thing half a minute later.
+        /// </summary>
+        public async Task GoOfflineAsync()
+        {
+            if (!Enabled || _userId == null)
+            {
+                return;
+            }
+
+            using CancellationTokenSource giveUp = new(TimeSpan.FromSeconds(2));
+
+            try
+            {
+                await PresenceAsync("OFFLINE", giveUp.Token);
+            }
+            catch (Exception exception)
+            {
+                Logger.Debug?.Print(LogClass.ServiceAcc, $"[OpenPak] Could not say goodbye: {exception.Message}");
+            }
+        }
+
+        /// <summary>The presence request a console's friends sysmodule makes, on the same path.</summary>
+        private async Task PresenceAsync(string state, CancellationToken cancellationToken)
+        {
+            using HttpRequestMessage request = new(HttpMethod.Patch,
+                $"https://{BaasHost}/1.0.0/users/{_userId}/device_accounts/{_device.Id}")
+            {
+                Content = new StringContent($$"""[{"op":"replace","path":"/presence/state","value":"{{state}}"}]""",
+                    Encoding.UTF8, "application/json"),
+            };
+
+            using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Logger.Debug?.Print(LogClass.ServiceAcc,
+                    $"[OpenPak] Presence {state} returned {(int)response.StatusCode}");
+            }
         }
 
         private async Task<JsonDocument> PostAsync(string url, HttpContent content, string bearer, CancellationToken cancellationToken)

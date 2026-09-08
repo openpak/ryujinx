@@ -28,6 +28,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Threading.Tasks;
+using Ryujinx.HLE.HOS.Services.Account.OpenPak;
 
 namespace Ryujinx.Ava
 {
@@ -492,6 +493,11 @@ namespace Ryujinx.Ava
         internal static void Exit()
         {
             DiscordIntegrationModule.Exit();
+
+            // Said before the logger goes, and waited on briefly: leaving is the one moment we can
+            // tell OpenPak we have gone, and every other way out — a crash, a kill — is covered by
+            // the lease lapsing instead.
+            OpenPakSession.Instance.GoOfflineAsync().Wait(TimeSpan.FromSeconds(3));
 
             Logger.Shutdown();
         }

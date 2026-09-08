@@ -70,22 +70,16 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         }
 
         /// <summary>
-        /// The sign-in page to open in the host's browser. The server builds that url from the name
-        /// the request arrived on, which for a console is a Nintendo hostname reached through a DNS
-        /// redirect — and that redirect applies to the guest, never to the browser on this machine.
-        /// OPENPAK_WEBSITE names an address a browser here can actually resolve; a deployment that
-        /// sets the server's own NX_LINK_BASE_URL correctly needs neither.
+        /// Where the host's browser should go to sign in. Not the hostname the emulator itself uses
+        /// for this server: that is a Nintendo name reached through a DNS redirect, and the redirect
+        /// applies to the guest, never to a browser on this machine. OPENPAK_WEBSITE names an
+        /// address a browser here can actually resolve.
         /// </summary>
-        public string LinkPage(string serverSupplied)
+        public string AccountsPage(string accountsHost)
         {
             string website = (Environment.GetEnvironmentVariable(WebsiteVariable) ?? string.Empty).Trim();
 
-            if (website.Length == 0)
-            {
-                return serverSupplied;
-            }
-
-            return website.TrimEnd('/') + new Uri(serverSupplied).PathAndQuery;
+            return website.Length == 0 ? $"https://{accountsHost}" : website.TrimEnd('/');
         }
 
         /// <summary>Filename-safe form of the address; keys the per-server device account.</summary>
@@ -152,6 +146,10 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         {
             SocketsHttpHandler handler = new()
             {
+                // Every host on this client is pinned to the OpenPak server, so a redirect must not
+                // be followed blindly — the sign-in redirect points at a loopback port on this
+                // machine, which is emphatically not there. Nothing in the token chain redirects.
+                AllowAutoRedirect = false,
                 ConnectCallback = async (context, cancellationToken) =>
                 {
                     Socket socket = new(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };

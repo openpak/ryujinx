@@ -87,8 +87,25 @@ namespace Ryujinx.Tests.HLE
                 Assert.That(OpenPakSession.Instance.IdToken, Is.Not.Null, "could not even sign in");
                 Assert.That(OpenPakSession.Instance.IsLinked, Is.False, "a fresh device account is not linked to anyone");
 
+                Exception browserFailure = null;
+
                 bool linked = await OpenPakSession.Instance.LinkAsync(
-                    (code, url) => SignInAndClaim(url, code, email, password), CancellationToken.None);
+                    // Off this thread, and not waited on: a real browser is a separate program, and
+                    // the request it makes lands on a loopback port nothing accepts until this
+                    // callback returns. Blocking here waits for a reply that cannot come yet.
+                    url => Task.Run(() =>
+                    {
+                        try
+                        {
+                            SignInAsABrowserWould(url, email, password);
+                        }
+                        catch (Exception exception)
+                        {
+                            browserFailure = exception;
+                        }
+                    }), CancellationToken.None);
+
+                Assert.That(browserFailure, Is.Null, $"the browser half failed: {browserFailure}");
 
                 Assert.Multiple(() =>
                 {
@@ -105,24 +122,32 @@ namespace Ryujinx.Tests.HLE
             }
         }
 
-        /// <summary>What the person with the browser does: sign in, then type the code back.</summary>
-        private static void SignInAndClaim(string linkUrl, string code, string email, string password)
+        /// <summary>
+        /// What the browser does: post the credentials to OpenPak's sign-in page, then follow the
+        /// redirect home. Two clients, because they end up on different machines — the sign-in page
+        /// is the OpenPak server, pinned to its CA, and the redirect is a loopback port on this one.
+        /// </summary>
+        private static void SignInAsABrowserWould(string authorizeUrl, string email, string password)
         {
-            string pair = new Uri(linkUrl).Query.Split("p=")[1].Split('&')[0];
+            using HttpClient toOpenPak = OpenPakServer.Current.CreateClient();
 
-            using HttpClient browser = OpenPakServer.Current.CreateClient();
+            HttpResponseMessage signIn = toOpenPak.PostAsync(authorizeUrl, new FormUrlEncodedContent(
+                new Dictionary<string, string> { ["email"] = email, ["password"] = password })).Result;
 
-            Post(browser, "/link", new() { ["pair"] = pair, ["email"] = email, ["password"] = password });
-            Post(browser, "/link/code", new() { ["pair"] = pair, ["code"] = code });
-        }
+            if (signIn.Headers.Location == null)
+            {
+                throw new HttpRequestException(
+                    $"signing in returned {(int)signIn.StatusCode} and no redirect — wrong credentials?");
+            }
 
-        private static void Post(HttpClient browser, string path, Dictionary<string, string> form)
-        {
-            // The link pages are served on the account host, whatever name the browser reached them by.
-            HttpResponseMessage response = browser
-                .PostAsync($"https://accounts.nintendo.com{path}", new FormUrlEncodedContent(form)).Result;
+            using HttpClient toLoopback = new();
 
-            Assert.That(response.IsSuccessStatusCode, Is.True, $"POST {path} returned {(int)response.StatusCode}");
+            HttpResponseMessage back = toLoopback.GetAsync(signIn.Headers.Location).Result;
+
+            if (!back.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException($"the callback answered {(int)back.StatusCode}");
+            }
         }
 
     }

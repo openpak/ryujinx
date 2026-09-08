@@ -245,28 +245,24 @@ namespace Ryujinx.Ava.UI.Views.Main
         }
 
         /// <summary>
-        /// A console links across two devices, showing a code for a phone to type back. Both screens
-        /// are this screen, so the emulator opens the sign-in page in the host's browser and shows
-        /// the code here — the code travelling by hand rather than in the url is the point, since a
-        /// code inside a link is a code inside a phishing link.
+        /// A console links across two devices — a QR for a phone, a code typed back, approval on
+        /// the console — because a console cannot receive anything from the browser signing it in.
+        /// A PC can: the emulator listens on a loopback port, the browser is sent to OpenPak with
+        /// that port as the way back, and signing in redirects straight onto it.
         /// </summary>
         private async Task LinkOpenPakAccount()
         {
             // There is nothing to link until a device account exists.
             await OpenPakSession.Instance.EnsureAsync(CancellationToken.None);
 
-            bool linked = await OpenPakSession.Instance.LinkAsync((code, url) =>
+            bool linked = await OpenPakSession.Instance.LinkAsync(url =>
                 Dispatcher.UIThread.Post(() =>
                 {
                     OpenHelper.OpenUrl(url);
 
-                    ContentDialogHelper.CreateInfoDialog(
-                        // Six digits in one run is easy to lose your place in.
-                        $"{code[..3]} {code[3..]}",
-                        LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.MenuBar_OpenPak_LinkMessage, url),
-                        LocaleManager.Instance[LocaleKeys.InputDialogOk],
-                        string.Empty,
-                        LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_LinkTitle]);
+                    NotificationHelper.ShowInformation(
+                        LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_LinkTitle],
+                        LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_LinkMessage]);
                 }), CancellationToken.None);
 
             if (linked)

@@ -2,7 +2,9 @@ using NUnit.Framework;
 using Ryujinx.Common.Configuration;
 using Ryujinx.HLE.HOS.Services.Account.OpenPak;
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -20,19 +22,26 @@ namespace Ryujinx.Tests.HLE
     [Explicit("Needs a running OpenPak server; see the class comment.")]
     public class OpenPakSessionTests
     {
+        private static string DataDirectory()
+        {
+            // A throwaway data directory: these write a device account and a client certificate,
+            // and reusing the real one would sign the tester's install in to the test server.
+            string directory = Path.Combine(Path.GetTempPath(), "ryujinx-openpak-test-" + Guid.NewGuid().ToString("n"));
+
+            // Initialize falls back to the user profile if the directory is not already there.
+            Directory.CreateDirectory(directory);
+            AppDataManager.Initialize(directory);
+
+            return directory;
+        }
+
         [Test]
         public async Task SignsInAndGetsAnIdToken()
         {
             Assert.That(Environment.GetEnvironmentVariable("OPENPAK_SERVER"), Is.Not.Null.And.Not.Empty,
                 "OPENPAK_SERVER is not set, so there is nothing to sign in to.");
 
-            // A throwaway data directory: this writes a device account and a client certificate,
-            // and reusing the real one would sign the tester's install in to the test server.
-            string dataDirectory = Path.Combine(Path.GetTempPath(), "ryujinx-openpak-test-" + Guid.NewGuid().ToString("n"));
-
-            // Initialize falls back to the user profile if the directory is not already there.
-            Directory.CreateDirectory(dataDirectory);
-            AppDataManager.Initialize(dataDirectory);
+            string dataDirectory = DataDirectory();
 
             try
             {
@@ -52,5 +61,69 @@ namespace Ryujinx.Tests.HLE
                 Directory.Delete(dataDirectory, true);
             }
         }
+        /// <summary>
+        /// The whole link: the emulator starts one, something signs in and types the code back, the
+        /// emulator approves, and the id_token it then holds belongs to an account. The part a
+        /// person does in a browser is done here with the same requests the page makes, so this
+        /// needs an account on the server —
+        ///
+        ///   OPENPAK_SERVER=… OPENPAK_CA=… OPENPAK_TEST_EMAIL=… OPENPAK_TEST_PASSWORD=… dotnet test …
+        /// </summary>
+        [Test]
+        public async Task LinksToAnAccount()
+        {
+            string email = Environment.GetEnvironmentVariable("OPENPAK_TEST_EMAIL");
+            string password = Environment.GetEnvironmentVariable("OPENPAK_TEST_PASSWORD");
+
+            Assert.That(email, Is.Not.Null.And.Not.Empty, "OPENPAK_TEST_EMAIL is not set.");
+            Assert.That(password, Is.Not.Null.And.Not.Empty, "OPENPAK_TEST_PASSWORD is not set.");
+
+            string dataDirectory = DataDirectory();
+
+            try
+            {
+                await OpenPakSession.Instance.EnsureAsync(CancellationToken.None);
+
+                Assert.That(OpenPakSession.Instance.IdToken, Is.Not.Null, "could not even sign in");
+                Assert.That(OpenPakSession.Instance.IsLinked, Is.False, "a fresh device account is not linked to anyone");
+
+                bool linked = await OpenPakSession.Instance.LinkAsync(
+                    (code, url) => SignInAndClaim(url, code, email, password), CancellationToken.None);
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(linked, Is.True, "the link did not complete");
+                    Assert.That(OpenPakSession.Instance.IsLinked, Is.True, "linked, but with no account name");
+                    Assert.That(OpenPakSession.Instance.IdToken, Does.Not.Contain(" "));
+                });
+
+                Console.WriteLine($"linked as {OpenPakSession.Instance.Nickname}");
+            }
+            finally
+            {
+                Directory.Delete(dataDirectory, true);
+            }
+        }
+
+        /// <summary>What the person with the browser does: sign in, then type the code back.</summary>
+        private static void SignInAndClaim(string linkUrl, string code, string email, string password)
+        {
+            string pair = new Uri(linkUrl).Query.Split("p=")[1].Split('&')[0];
+
+            using HttpClient browser = OpenPakServer.Current.CreateClient();
+
+            Post(browser, "/link", new() { ["pair"] = pair, ["email"] = email, ["password"] = password });
+            Post(browser, "/link/code", new() { ["pair"] = pair, ["code"] = code });
+        }
+
+        private static void Post(HttpClient browser, string path, Dictionary<string, string> form)
+        {
+            // The link pages are served on the account host, whatever name the browser reached them by.
+            HttpResponseMessage response = browser
+                .PostAsync($"https://accounts.nintendo.com{path}", new FormUrlEncodedContent(form)).Result;
+
+            Assert.That(response.IsSuccessStatusCode, Is.True, $"POST {path} returned {(int)response.StatusCode}");
+        }
+
     }
 }

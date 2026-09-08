@@ -17,11 +17,13 @@ using Ryujinx.Ava.Utilities;
 using Ryujinx.Common;
 using Ryujinx.Common.Helper;
 using Ryujinx.Common.Utilities;
+using Ryujinx.HLE.HOS.Services.Account.OpenPak;
 using Ryujinx.HLE.HOS.Services.Nfc.AmiiboDecryption;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Ryujinx.Ava.UI.Views.Main
@@ -47,6 +49,11 @@ namespace Ryujinx.Ava.UI.Views.Main
             AboutWindowMenuItem.Command = Commands.Create(AboutView.Show);
             CompatibilityListMenuItem.Command = Commands.Create(() => CompatibilityListWindow.Show());
             LdnGameListMenuItem.Command = Commands.Create(() => LdnGamesListWindow.Show());
+
+            OpenPakSignInMenuItem.Command = Commands.Create(SignInToOpenPak);
+            OpenPakLinkMenuItem.Command = Commands.Create(LinkOpenPakAccount);
+            OpenPakWebsiteMenuItem.Command = Commands.Create(() => OpenHelper.OpenUrl(OpenPakWebsiteUrl));
+            OpenPakMenuItem.SubmenuOpened += (_, _) => RefreshOpenPakStatus();
 
             UpdateMenuItem.Command = MainWindowViewModel.UpdateCommand;
 
@@ -203,5 +210,79 @@ namespace Ryujinx.Ava.UI.Views.Main
                 Window.Height = windowHeightScaled;
             });
         }
+        private const string OpenPakWebsiteUrl = "https://openpak.org";
+
+        /// <summary>
+        /// Signed in and linked are different states and the menu says which: an unlinked device
+        /// account holds a perfectly valid token that no title server can attach to a person.
+        /// </summary>
+        private void RefreshOpenPakStatus()
+        {
+            OpenPakSession session = OpenPakSession.Instance;
+
+            OpenPakStatusMenuItem.Header = !session.Enabled
+                ? LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_NoServer]
+                : session.IsLinked
+                    ? LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.MenuBar_OpenPak_LinkedAs, session.Nickname)
+                    : session.IdToken != null
+                        ? LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.MenuBar_OpenPak_SignedIn, session.ServerAddress)
+                        : LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_NotSignedIn];
+
+            OpenPakSignInMenuItem.IsEnabled = OpenPakLinkMenuItem.IsEnabled = session.Enabled;
+        }
+
+        private async Task SignInToOpenPak()
+        {
+            await OpenPakSession.Instance.EnsureAsync(CancellationToken.None);
+
+            if (OpenPakSession.Instance.IdToken == null)
+            {
+                NotificationHelper.ShowWarning(LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_Label],
+                    LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_SignInFailed]);
+            }
+
+            RefreshOpenPakStatus();
+        }
+
+        /// <summary>
+        /// A console links across two devices, showing a code for a phone to type back. Both screens
+        /// are this screen, so the emulator opens the sign-in page in the host's browser and shows
+        /// the code here — the code travelling by hand rather than in the url is the point, since a
+        /// code inside a link is a code inside a phishing link.
+        /// </summary>
+        private async Task LinkOpenPakAccount()
+        {
+            // There is nothing to link until a device account exists.
+            await OpenPakSession.Instance.EnsureAsync(CancellationToken.None);
+
+            bool linked = await OpenPakSession.Instance.LinkAsync((code, url) =>
+                Dispatcher.UIThread.Post(() =>
+                {
+                    OpenHelper.OpenUrl(url);
+
+                    ContentDialogHelper.CreateInfoDialog(
+                        // Six digits in one run is easy to lose your place in.
+                        $"{code[..3]} {code[3..]}",
+                        LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.MenuBar_OpenPak_LinkMessage, url),
+                        LocaleManager.Instance[LocaleKeys.InputDialogOk],
+                        string.Empty,
+                        LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_LinkTitle]);
+                }), CancellationToken.None);
+
+            if (linked)
+            {
+                NotificationHelper.ShowSuccess(LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_Label],
+                    LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.MenuBar_OpenPak_LinkDone,
+                        OpenPakSession.Instance.Nickname));
+            }
+            else
+            {
+                NotificationHelper.ShowWarning(LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_Label],
+                    LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_LinkFailed]);
+            }
+
+            RefreshOpenPakStatus();
+        }
+
     }
 }

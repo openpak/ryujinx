@@ -31,6 +31,7 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
     {
         private const string ServerVariable = "OPENPAK_SERVER";
         private const string CaVariable = "OPENPAK_CA";
+        private const string WebsiteVariable = "OPENPAK_WEBSITE";
 
         private static OpenPakServer _current;
         private static bool _resolved;
@@ -66,6 +67,25 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             _ca = ca;
 
             Address = $"{host}:{port}";
+        }
+
+        /// <summary>
+        /// The sign-in page to open in the host's browser. The server builds that url from the name
+        /// the request arrived on, which for a console is a Nintendo hostname reached through a DNS
+        /// redirect — and that redirect applies to the guest, never to the browser on this machine.
+        /// OPENPAK_WEBSITE names an address a browser here can actually resolve; a deployment that
+        /// sets the server's own NX_LINK_BASE_URL correctly needs neither.
+        /// </summary>
+        public string LinkPage(string serverSupplied)
+        {
+            string website = (Environment.GetEnvironmentVariable(WebsiteVariable) ?? string.Empty).Trim();
+
+            if (website.Length == 0)
+            {
+                return serverSupplied;
+            }
+
+            return website.TrimEnd('/') + new Uri(serverSupplied).PathAndQuery;
         }
 
         /// <summary>Filename-safe form of the address; keys the per-server device account.</summary>

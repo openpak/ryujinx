@@ -32,7 +32,7 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
     /// The device account identifies this emulator install, not a person. Its id_token carries an
     /// OpenPak identity only after the account has been linked, which is a separate flow.
     /// </summary>
-    class OpenPakSession
+    public class OpenPakSession
     {
         public static OpenPakSession Instance { get; } = new();
 
@@ -43,6 +43,14 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         // than from anything in the request body.
         private const string BaasClientId = "8f849b5d34778d8e";
 
+        // The Nintendo Account surface: the sign-in page, the link states, and the token exchange.
+        private const string NaHost = "accounts.nintendo.com";
+
+        // Where the browser comes back to. Nothing listens on it — the emulator reads the code out
+        // of the redirect itself rather than following it, because on a PC the same process that
+        // asked for the link is the one approving it.
+        private const string LinkRedirect = "openpak://linked";
+
         private readonly SemaphoreSlim _gate = new(1, 1);
 
         private HttpClient _http;
@@ -51,6 +59,7 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         private string _idToken;
         private DateTime _idTokenExpiry;
         private ulong _networkServiceAccountId;
+        private string _nickname;
 
         /// <summary>An OpenPak server is configured and reachable enough to have been set up.</summary>
         public bool Enabled => Server != null;
@@ -60,6 +69,18 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 
         /// <summary>The BAAS user id as the u64 the guest calls a NetworkServiceAccountId, or 0.</summary>
         public ulong NetworkServiceAccountId => _networkServiceAccountId;
+
+        /// <summary>host:port of the configured server, or null when there is none.</summary>
+        public string ServerAddress => Server?.Address;
+
+        /// <summary>The OpenPak account this install is linked to, or null while it is anonymous.</summary>
+        public string Nickname => _nickname;
+
+        /// <summary>
+        /// Whether the id_token carries an OpenPak identity. Signed in is not linked: an unlinked
+        /// device account gets a perfectly valid token that no title server can attach to a person.
+        /// </summary>
+        public bool IsLinked => _nickname != null;
 
         private static OpenPakServer Server => OpenPakServer.Current;
 
@@ -101,7 +122,14 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         // Five minutes of slack: a token that expires mid-session is worse than one fetched early.
         private bool Fresh() => _idToken != null && DateTime.UtcNow < _idTokenExpiry - TimeSpan.FromMinutes(5);
 
-        private async Task LoginAsync(CancellationToken cancellationToken)
+        private async Task LoginAsync(CancellationToken cancellationToken) => await LoginAsync(null, cancellationToken);
+
+        /// <summary>
+        /// The login chain. With a Nintendo Account id_token it goes to /federation instead, which
+        /// is the same login plus the binding to an OpenPak account — after it, the id_token the
+        /// guest receives carries the nnex claim a title server needs to know who is playing.
+        /// </summary>
+        private async Task LoginAsync(string accountIdToken, CancellationToken cancellationToken)
         {
             _http ??= Server.CreateClient();
 
@@ -142,15 +170,23 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 
             _device ??= DeviceAccount.Load(Server.Key) ?? await CreateDeviceAccountAsync(applicationToken, cancellationToken);
 
-            using JsonDocument login = await PostAsync($"https://{BaasHost}/1.0.0/login",
-                Form(("id", _device.Id), ("password", _device.Password)), applicationToken, cancellationToken);
+            bool linking = accountIdToken != null;
+
+            using JsonDocument login = await PostAsync(
+                $"https://{BaasHost}/1.0.0/{(linking ? "federation" : "login")}",
+                linking
+                    ? Form(("id", _device.Id), ("password", _device.Password), ("idToken", accountIdToken))
+                    : Form(("id", _device.Id), ("password", _device.Password)),
+                applicationToken, cancellationToken);
 
             _idToken = login.RootElement.GetProperty("idToken").GetString();
             _idTokenExpiry = DateTime.UtcNow + TimeSpan.FromSeconds(login.RootElement.GetProperty("expiresIn").GetInt32());
             _networkServiceAccountId = ParseUserId(login.RootElement.GetProperty("user").GetProperty("id").GetString());
+            _nickname = NicknameOf(login.RootElement);
 
-            Logger.Info?.Print(LogClass.ServiceAcc,
-                $"[OpenPak] Signed in as device account {_device.Id} on {Server.Address}");
+            Logger.Info?.Print(LogClass.ServiceAcc, _nickname != null
+                ? $"[OpenPak] Signed in as {_nickname} on {Server.Address}"
+                : $"[OpenPak] Signed in as device account {_device.Id} on {Server.Address} (not linked to an account)");
         }
 
         private async Task<DeviceAccount> CreateDeviceAccountAsync(string applicationToken, CancellationToken cancellationToken)
@@ -171,6 +207,137 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             Logger.Info?.Print(LogClass.ServiceAcc, $"[OpenPak] Registered device account {device.Id}");
 
             return device;
+        }
+
+        /// <summary>
+        /// Bind this install to an OpenPak account through the host's browser.
+        ///
+        /// A console does this across two devices: it shows a QR and a six-digit code, a phone
+        /// signs in and types the code back, and the person at the console approves. On a PC both
+        /// screens are the same screen, so the shape changes — the emulator opens the sign-in page
+        /// in the host's own browser and approves here — but the code still travels the short way,
+        /// from this window to that page, by hand.
+        ///
+        /// It is not put in the url that opens. That is the entire guard: a code carried by a link
+        /// is carried just as well by a phishing link, and the final approval cannot catch it,
+        /// because the side that approves is whichever client started the link.
+        ///
+        /// <paramref name="onReady"/> receives the code to show and the page to open.
+        /// </summary>
+        public async Task<bool> LinkAsync(Action<string, string> onReady, CancellationToken cancellationToken)
+        {
+            if (!Enabled)
+            {
+                return false;
+            }
+
+            await _gate.WaitAsync(cancellationToken);
+
+            try
+            {
+                _http ??= Server.CreateClient();
+
+                string query = $"response_type=code&client_id={BaasClientId}&redirect_uri={Uri.EscapeDataString(LinkRedirect)}";
+
+                using JsonDocument start = await PostAsync($"https://{NaHost}/connect/1.0.0/qr/new?{query}",
+                    null, null, cancellationToken);
+
+                string code = start.RootElement.GetProperty("code").GetString();
+
+                onReady(code, Server.LinkPage(start.RootElement.GetProperty("link_url").GetString()));
+
+                string accountIdToken = await AwaitApprovalAsync(code, cancellationToken);
+
+                if (accountIdToken == null)
+                {
+                    return false;
+                }
+
+                // Federation is the login that also binds, so this replaces the cached token with
+                // one that carries the account.
+                await LoginAsync(accountIdToken, cancellationToken);
+
+                return IsLinked;
+            }
+            catch (Exception exception)
+            {
+                Logger.Warning?.Print(LogClass.ServiceAcc, $"[OpenPak] Linking failed: {exception.Message}");
+
+                return false;
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+
+        /// <summary>
+        /// Wait for someone to sign in and type the code, approve it here, and trade the result for
+        /// a Nintendo Account id_token. Null if it was denied, expired, or cancelled.
+        /// </summary>
+        private async Task<string> AwaitApprovalAsync(string code, CancellationToken cancellationToken)
+        {
+            while (true)
+            {
+                using JsonDocument state = await GetAsync($"https://{NaHost}/connect/1.0.0/qr/state?c={code}", cancellationToken);
+
+                switch (state.RootElement.GetProperty("state").GetString())
+                {
+                    case "claimed":
+                        using (JsonDocument approved = await PostAsync($"https://{NaHost}/connect/1.0.0/qr/approve?c={code}",
+                            null, null, cancellationToken))
+                        {
+                            string authorizationCode = CodeFromRedirect(approved.RootElement.GetProperty("redirect").GetString());
+
+                            using JsonDocument token = await PostAsync($"https://{NaHost}/connect/1.0.0/api/token",
+                                Form(("code", authorizationCode), ("client_id", BaasClientId),
+                                    ("grant_type", "authorization_code")), null, cancellationToken);
+
+                            return token.RootElement.GetProperty("id_token").GetString();
+                        }
+
+                    case "denied":
+                    case "expired":
+                        Logger.Info?.Print(LogClass.ServiceAcc, "[OpenPak] The link was refused or ran out of time.");
+
+                        return null;
+
+                    default:
+                        // waiting, or signed in and not yet confirmed: the person is still typing.
+                        await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+
+                        break;
+                }
+            }
+        }
+
+        /// <summary>The approval hands back the redirect the console would have followed.</summary>
+        private static string CodeFromRedirect(string redirect)
+        {
+            foreach (string part in redirect.AsSpan()[(redirect.IndexOfAny(['?', '#']) + 1)..].ToString().Split('&'))
+            {
+                string[] pair = part.Split('=', 2);
+
+                if (pair.Length == 2 && (pair[0] == "code" || pair[0] == "session_token_code"))
+                {
+                    return Uri.UnescapeDataString(pair[1]);
+                }
+            }
+
+            throw new InvalidOperationException($"the approval redirect carried no code: {redirect}");
+        }
+
+        private async Task<JsonDocument> GetAsync(string url, CancellationToken cancellationToken)
+        {
+            using HttpResponseMessage response = await _http.GetAsync(url, cancellationToken);
+            string body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException($"GET {url} returned {(int)response.StatusCode}: {body}");
+            }
+
+            return JsonDocument.Parse(body);
         }
 
         private async Task<JsonDocument> PostAsync(string url, HttpContent content, string bearer, CancellationToken cancellationToken)
@@ -218,6 +385,24 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             }
 
             return Encoding.UTF8.GetString(stream.ToArray());
+        }
+
+        /// <summary>
+        /// The account name, or null when the device account is still anonymous. An unlinked user
+        /// object carries an empty nickname, which is not the same thing as being linked to someone
+        /// with no name.
+        /// </summary>
+        private static string NicknameOf(JsonElement login)
+        {
+            if (!login.TryGetProperty("user", out JsonElement user) ||
+                !user.TryGetProperty("nickname", out JsonElement nickname))
+            {
+                return null;
+            }
+
+            string value = nickname.GetString();
+
+            return string.IsNullOrEmpty(value) ? null : value;
         }
 
         /// <summary>The BAAS user id is 16 hex digits; the guest wants those 8 bytes as a u64.</summary>

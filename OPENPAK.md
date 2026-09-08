@@ -61,15 +61,28 @@ the account link exists to put in it.
 
 The device account and the client certificate are kept per server under `<data dir>/openpak/`.
 
+## Linking, and why it is not the console's flow
+
+A console links across two devices: it shows a QR and a six-digit code, a phone signs in and
+types the code back, and the person at the console approves. The reasoning is that scanning a
+square proves you have a phone, not that you are sitting in front of that console.
+
+On a PC both screens are the same screen. The emulator opens OpenPak's sign-in page in the
+host's own browser — *not* one of the redirected Nintendo hostnames, which only resolve for the
+guest — shows the code in its own window, and approves there. What does not change is that the
+code travels by hand: a code carried in the url would be carried just as well by a link someone
+sends you, and the approval cannot catch that, because the side that approves is whichever
+client started the link.
+
+`OPENPAK_WEBSITE` names the address a browser on this machine can reach, for deployments whose
+server does not already set its own `NX_LINK_BASE_URL`.
+
 ## Status
 
-Signing in works. The emulator completes the console's own chain against a live OpenPak
+Signing in and linking both work. The emulator completes the console's own chain against a live OpenPak
 (`dotnet test --filter OpenPakSessionTests`, with a server configured) and a game asking acc:u0
 for an id_token now gets a real one.
 
 What is left before a title is actually online:
 
-- **The account link.** The device account is anonymous until it is bound to an OpenPak account,
-  and the id_token carries no `nnex` claim until then — so title servers see no identity. The
-  console does this through a browser and a six-digit code; the emulator has to do the same.
 - **NAT check** (`nncs1`/`nncs2`, UDP), and whatever a first title turns out to want.

@@ -1,0 +1,43 @@
+<UserControl
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ext="clr-namespace:Ryujinx.Ava.Common.Markup"
+    x:Class="Ryujinx.Ava.UI.Views.Dialog.OpenPakLinkView"
+    Width="560">
+    <StackPanel Spacing="16">
+        <TextBlock
+            Name="Instructions"
+            TextWrapping="Wrap"
+            Text="{ext:Locale MenuBar_OpenPak_LinkScan}" />
+        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="24">
+            <StackPanel Grid.Column="0" Spacing="8" HorizontalAlignment="Center">
+                <Border Background="White" Padding="8" CornerRadius="4">
+                    <Image Name="QrImage" Width="168" Height="168" />
+                </Border>
+                <TextBlock
+                    Name="CodeText"
+                    FontSize="26"
+                    FontWeight="Bold"
+                    HorizontalAlignment="Center"
+                    Text="- - -  - - -" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Center">
+                <TextBlock Text="{ext:Locale MenuBar_OpenPak_LinkOr}" FontWeight="Bold" />
+                <TextBox Name="EmailBox" Watermark="{ext:Locale MenuBar_OpenPak_LinkEmail}" />
+                <TextBox Name="PasswordBox" PasswordChar="•" Watermark="{ext:Locale MenuBar_OpenPak_LinkPassword}" />
+                <Button
+                    Name="SignInButton"
+                    Content="{ext:Locale MenuBar_OpenPak_SignIn}"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center" />
+            </StackPanel>
+        </Grid>
+        <TextBlock Name="StatusText" TextWrapping="Wrap" IsVisible="False" />
+        <Button
+            Name="ApproveButton"
+            Content="{ext:Locale MenuBar_OpenPak_LinkApprove}"
+            IsVisible="False"
+            HorizontalAlignment="Stretch"
+            HorizontalContentAlignment="Center" />
+    </StackPanel>
+</UserControl>

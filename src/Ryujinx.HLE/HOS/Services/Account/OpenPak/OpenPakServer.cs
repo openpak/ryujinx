@@ -31,7 +31,6 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
     {
         private const string ServerVariable = "OPENPAK_SERVER";
         private const string CaVariable = "OPENPAK_CA";
-        private const string WebsiteVariable = "OPENPAK_WEBSITE";
 
         private static OpenPakServer _current;
         private static bool _resolved;
@@ -67,19 +66,6 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             _ca = ca;
 
             Address = $"{host}:{port}";
-        }
-
-        /// <summary>
-        /// Where the host's browser should go to sign in. Not the hostname the emulator itself uses
-        /// for this server: that is a Nintendo name reached through a DNS redirect, and the redirect
-        /// applies to the guest, never to a browser on this machine. OPENPAK_WEBSITE names an
-        /// address a browser here can actually resolve.
-        /// </summary>
-        public string AccountsPage(string accountsHost)
-        {
-            string website = (Environment.GetEnvironmentVariable(WebsiteVariable) ?? string.Empty).Trim();
-
-            return website.Length == 0 ? $"https://{accountsHost}" : website.TrimEnd('/');
         }
 
         /// <summary>Filename-safe form of the address; keys the per-server device account.</summary>

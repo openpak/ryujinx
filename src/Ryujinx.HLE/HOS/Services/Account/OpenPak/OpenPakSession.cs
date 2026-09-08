@@ -210,22 +210,15 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         }
 
         /// <summary>
-        /// Bind this install to an OpenPak account through the host's browser.
+        /// Bind this install to an OpenPak account.
         ///
-        /// A console links across two devices: it shows a QR and a six-digit code, a phone signs in
-        /// and types the code back, and the person at the console approves. All of that exists
-        /// because a console cannot receive anything from the browser doing the signing in.
-        ///
-        /// A PC can. The emulator listens on a loopback port, hands that address to OpenPak as the
-        /// place to come back to, and opens the sign-in page in the host's own browser — OpenPak's
-        /// address, never a redirected Nintendo hostname, since those resolve for the guest and
-        /// nothing else. Signing in redirects the browser onto that port with an authorization
-        /// code, which is traded here for the token that binds the account. No code to read out, no
-        /// code to type, and nothing polled.
-        ///
-        /// <paramref name="openBrowser"/> receives the page to open.
+        /// A console cannot do this itself: it has no keyboard worth the name, so it shows a QR and
+        /// a code and lets a phone do the typing. This has a keyboard. The credentials go straight
+        /// to OpenPak's authorize endpoint over the pinned connection, which answers with a redirect
+        /// carrying an authorization code — the same code the browser flow would have delivered, and
+        /// the same exchange after it. Nothing is stored: what is kept is the token that comes back.
         /// </summary>
-        public async Task<bool> LinkAsync(Action<string> openBrowser, CancellationToken cancellationToken)
+        public async Task<bool> LinkAsync(string email, string password, CancellationToken cancellationToken)
         {
             if (!Enabled)
             {
@@ -238,28 +231,29 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             {
                 _http ??= Server.CreateClient();
 
-                // Bound before the browser is sent anywhere: the port has to exist to be named, and
-                // holding the socket is what stops anything else on this machine from taking it.
-                using LoopbackCallback callback = new();
+                string authorize = $"https://{NaHost}/connect/1.0.0/authorize" +
+                    $"?response_type=code&client_id={BaasClientId}&redirect_uri={Uri.EscapeDataString(LinkRedirect)}";
 
-                // Proves the redirect that arrives is the one this flow asked for.
-                string state = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
-
-                string authorize = $"{Server.AccountsPage(NaHost)}/connect/1.0.0/authorize" +
-                    $"?response_type=code&client_id={BaasClientId}" +
-                    $"&redirect_uri={Uri.EscapeDataString(callback.Address)}&state={state}";
-
-                openBrowser(authorize);
-
-                string code = await callback.WaitForCodeAsync(state, cancellationToken);
-
-                if (code == null)
+                using HttpRequestMessage request = new(HttpMethod.Post, authorize)
                 {
+                    Content = Form(("email", email), ("password", password)),
+                };
+
+                using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken);
+
+                // Right credentials redirect. Wrong ones come back as the sign-in page again, with
+                // the reason written on it — a 200, which is why this looks for the redirect rather
+                // than for success.
+                if (response.Headers.Location == null)
+                {
+                    Logger.Info?.Print(LogClass.ServiceAcc, "[OpenPak] Sign-in was refused.");
+
                     return false;
                 }
 
                 using JsonDocument token = await PostAsync($"https://{NaHost}/connect/1.0.0/api/token",
-                    Form(("code", code), ("client_id", BaasClientId), ("grant_type", "authorization_code")),
+                    Form(("code", CodeFromRedirect(response.Headers.Location.ToString())),
+                        ("client_id", BaasClientId), ("grant_type", "authorization_code")),
                     null, cancellationToken);
 
                 // Federation is the login that also binds, so this replaces the cached token with
@@ -278,6 +272,129 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             {
                 _gate.Release();
             }
+        }
+
+        /// <summary>The authorization code lives in the query of the redirect we are told to follow.</summary>
+        private static string CodeFromRedirect(string redirect)
+        {
+            foreach (string part in redirect[(redirect.IndexOfAny(['?', '#']) + 1)..].Split('&'))
+            {
+                string[] pair = part.Split('=', 2);
+
+                if (pair.Length == 2 && pair[0] == "code")
+                {
+                    return Uri.UnescapeDataString(pair[1]);
+                }
+            }
+
+            throw new InvalidOperationException($"the sign-in redirect carried no code: {redirect}");
+        }
+
+        /// <summary>The console's link screen, as the server draws it for every client.</summary>
+        public sealed record LinkInvitation(string Code, string CodeDisplay, string LinkUrl, byte[] Qr);
+
+        /// <summary>
+        /// Start a link the way a console does, and get back what a console puts on screen: a code,
+        /// and a QR pointing a phone at the page where it signs in. Rendered by the server so that
+        /// every client — this emulator, the next one, a real console — shows the same screen and
+        /// none of them needs a QR encoder of its own.
+        /// </summary>
+        public async Task<LinkInvitation> StartLinkAsync(CancellationToken cancellationToken)
+        {
+            if (!Enabled)
+            {
+                return null;
+            }
+
+            _http ??= Server.CreateClient();
+
+            using JsonDocument start = await PostAsync(
+                $"https://{NaHost}/connect/1.0.0/qr/new?response_type=code&client_id={BaasClientId}" +
+                $"&redirect_uri={Uri.EscapeDataString(LinkRedirect)}", null, null, cancellationToken);
+
+            JsonElement root = start.RootElement;
+            string qr = root.GetProperty("qr").GetString() ?? string.Empty;
+            const string DataUri = "data:image/png;base64,";
+
+            return new LinkInvitation(
+                root.GetProperty("code").GetString(),
+                root.GetProperty("code_display").GetString(),
+                root.GetProperty("link_url").GetString(),
+                qr.StartsWith(DataUri) ? Convert.FromBase64String(qr[DataUri.Length..]) : null);
+        }
+
+        /// <summary>
+        /// Wait for a phone to sign in and type the code back, and report whose account it was.
+        /// Null if the code was refused or ran out of time. Nothing is linked yet at this point:
+        /// the person holding the emulator still has to say yes, exactly as they would on a console.
+        /// </summary>
+        public async Task<string> AwaitClaimAsync(string code, CancellationToken cancellationToken)
+        {
+            while (true)
+            {
+                using JsonDocument state = await GetAsync(
+                    $"https://{NaHost}/connect/1.0.0/qr/state?c={code}", cancellationToken);
+
+                switch (state.RootElement.GetProperty("state").GetString())
+                {
+                    case "claimed":
+                        return state.RootElement.GetProperty("account").GetString();
+
+                    case "denied":
+                    case "expired":
+                        return null;
+
+                    default:
+                        // Waiting, or signed in and still typing.
+                        await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+
+                        break;
+                }
+            }
+        }
+
+        /// <summary>Say yes to a claimed code, and finish the link it stands for.</summary>
+        public async Task<bool> ApproveAsync(string code, CancellationToken cancellationToken)
+        {
+            await _gate.WaitAsync(cancellationToken);
+
+            try
+            {
+                using JsonDocument approved = await PostAsync(
+                    $"https://{NaHost}/connect/1.0.0/qr/approve?c={code}", null, null, cancellationToken);
+
+                using JsonDocument token = await PostAsync($"https://{NaHost}/connect/1.0.0/api/token",
+                    Form(("code", CodeFromRedirect(approved.RootElement.GetProperty("redirect").GetString())),
+                        ("client_id", BaasClientId), ("grant_type", "authorization_code")),
+                    null, cancellationToken);
+
+                await LoginAsync(token.RootElement.GetProperty("id_token").GetString(), cancellationToken);
+
+                return IsLinked;
+            }
+            catch (Exception exception)
+            {
+                Logger.Warning?.Print(LogClass.ServiceAcc, $"[OpenPak] Approving the link failed: {exception.Message}");
+
+                return false;
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+
+        private async Task<JsonDocument> GetAsync(string url, CancellationToken cancellationToken)
+        {
+            using HttpResponseMessage response = await _http.GetAsync(url, cancellationToken);
+            string body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException($"GET {url} returned {(int)response.StatusCode}: {body}");
+            }
+
+            return JsonDocument.Parse(body);
         }
 
         private async Task<JsonDocument> PostAsync(string url, HttpContent content, string bearer, CancellationToken cancellationToken)

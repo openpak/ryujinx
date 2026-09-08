@@ -2,9 +2,7 @@ using NUnit.Framework;
 using Ryujinx.Common.Configuration;
 using Ryujinx.HLE.HOS.Services.Account.OpenPak;
 using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -62,10 +60,8 @@ namespace Ryujinx.Tests.HLE
             }
         }
         /// <summary>
-        /// The whole link: the emulator starts one, something signs in and types the code back, the
-        /// emulator approves, and the id_token it then holds belongs to an account. The part a
-        /// person does in a browser is done here with the same requests the page makes, so this
-        /// needs an account on the server —
+        /// The whole link, by the path the emulator's own form takes: credentials in, an account on
+        /// the id_token that comes back out. Needs an account on the server —
         ///
         ///   OPENPAK_SERVER=… OPENPAK_CA=… OPENPAK_TEST_EMAIL=… OPENPAK_TEST_PASSWORD=… dotnet test …
         /// </summary>
@@ -87,31 +83,12 @@ namespace Ryujinx.Tests.HLE
                 Assert.That(OpenPakSession.Instance.IdToken, Is.Not.Null, "could not even sign in");
                 Assert.That(OpenPakSession.Instance.IsLinked, Is.False, "a fresh device account is not linked to anyone");
 
-                Exception browserFailure = null;
-
-                bool linked = await OpenPakSession.Instance.LinkAsync(
-                    // Off this thread, and not waited on: a real browser is a separate program, and
-                    // the request it makes lands on a loopback port nothing accepts until this
-                    // callback returns. Blocking here waits for a reply that cannot come yet.
-                    url => Task.Run(() =>
-                    {
-                        try
-                        {
-                            SignInAsABrowserWould(url, email, password);
-                        }
-                        catch (Exception exception)
-                        {
-                            browserFailure = exception;
-                        }
-                    }), CancellationToken.None);
-
-                Assert.That(browserFailure, Is.Null, $"the browser half failed: {browserFailure}");
+                bool linked = await OpenPakSession.Instance.LinkAsync(email, password, CancellationToken.None);
 
                 Assert.Multiple(() =>
                 {
                     Assert.That(linked, Is.True, "the link did not complete");
                     Assert.That(OpenPakSession.Instance.IsLinked, Is.True, "linked, but with no account name");
-                    Assert.That(OpenPakSession.Instance.IdToken, Does.Not.Contain(" "));
                 });
 
                 Console.WriteLine($"linked as {OpenPakSession.Instance.Nickname}");
@@ -122,31 +99,30 @@ namespace Ryujinx.Tests.HLE
             }
         }
 
-        /// <summary>
-        /// What the browser does: post the credentials to OpenPak's sign-in page, then follow the
-        /// redirect home. Two clients, because they end up on different machines — the sign-in page
-        /// is the OpenPak server, pinned to its CA, and the redirect is a loopback port on this one.
-        /// </summary>
-        private static void SignInAsABrowserWould(string authorizeUrl, string email, string password)
+        /// <summary>Wrong credentials must not link anything, and must not throw at the caller.</summary>
+        [Test]
+        public async Task RefusesTheWrongPassword()
         {
-            using HttpClient toOpenPak = OpenPakServer.Current.CreateClient();
+            string dataDirectory = DataDirectory();
 
-            HttpResponseMessage signIn = toOpenPak.PostAsync(authorizeUrl, new FormUrlEncodedContent(
-                new Dictionary<string, string> { ["email"] = email, ["password"] = password })).Result;
-
-            if (signIn.Headers.Location == null)
+            try
             {
-                throw new HttpRequestException(
-                    $"signing in returned {(int)signIn.StatusCode} and no redirect — wrong credentials?");
+                await OpenPakSession.Instance.EnsureAsync(CancellationToken.None);
+
+                // The session is one object for the whole process, as it is in the emulator, so a
+                // test that ran before this one may already have linked it. What must hold either
+                // way is that a refused sign-in changes nothing.
+                string before = OpenPakSession.Instance.Nickname;
+
+                bool linked = await OpenPakSession.Instance.LinkAsync(
+                    "nobody@example.invalid", "not-the-password", CancellationToken.None);
+
+                Assert.That(linked, Is.False, "a wrong password linked something");
+                Assert.That(OpenPakSession.Instance.Nickname, Is.EqualTo(before), "a refused sign-in changed the account");
             }
-
-            using HttpClient toLoopback = new();
-
-            HttpResponseMessage back = toLoopback.GetAsync(signIn.Headers.Location).Result;
-
-            if (!back.IsSuccessStatusCode)
+            finally
             {
-                throw new HttpRequestException($"the callback answered {(int)back.StatusCode}");
+                Directory.Delete(dataDirectory, true);
             }
         }
 

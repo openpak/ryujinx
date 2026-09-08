@@ -290,8 +290,13 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             throw new InvalidOperationException($"the sign-in redirect carried no code: {redirect}");
         }
 
-        /// <summary>The console's link screen, as the server draws it for every client.</summary>
-        public sealed record LinkInvitation(string Code, string CodeDisplay, string LinkUrl, byte[] Qr);
+        /// <summary>
+        /// The console's link screen, as the server draws it for every client. LinkUrl and Qr are
+        /// null when the server has no address a phone could open, in which case NoPhoneReason says
+        /// why — a square pointing at a name only this machine resolves would send the pairing id
+        /// to whoever really owns that name.
+        /// </summary>
+        public sealed record LinkInvitation(string Code, string CodeDisplay, string LinkUrl, byte[] Qr, string NoPhoneReason);
 
         /// <summary>
         /// Start a link the way a console does, and get back what a console puts on screen: a code,
@@ -313,23 +318,35 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                 $"&redirect_uri={Uri.EscapeDataString(LinkRedirect)}", null, null, cancellationToken);
 
             JsonElement root = start.RootElement;
-            string qr = root.GetProperty("qr").GetString() ?? string.Empty;
             const string DataUri = "data:image/png;base64,";
+
+            string qr = root.TryGetProperty("qr", out JsonElement image) ? image.GetString() : null;
 
             return new LinkInvitation(
                 root.GetProperty("code").GetString(),
                 root.GetProperty("code_display").GetString(),
-                root.GetProperty("link_url").GetString(),
-                qr.StartsWith(DataUri) ? Convert.FromBase64String(qr[DataUri.Length..]) : null);
+                root.TryGetProperty("link_url", out JsonElement link) ? link.GetString() : null,
+                qr != null && qr.StartsWith(DataUri) ? Convert.FromBase64String(qr[DataUri.Length..]) : null,
+                root.TryGetProperty("no_phone_reason", out JsonElement why) ? why.GetString() : null);
         }
 
         /// <summary>
-        /// Wait for a phone to sign in and type the code back, and report whose account it was.
-        /// Null if the code was refused or ran out of time. Nothing is linked yet at this point:
-        /// the person holding the emulator still has to say yes, exactly as they would on a console.
+        /// Follow the link through its two waits, in the order a console does them:
+        ///
+        ///   scan  ->  the phone signs in  ->  <paramref name="onSignedIn"/>, and only now is the
+        ///   code worth showing  ->  the phone types it back  ->  this returns whose account it was
+        ///
+        /// The code is not shown before that first step on purpose. Revealing it only once someone
+        /// has signed in is what makes a photograph of this screen worth nothing: the onlooker has
+        /// a sign-in page, and the code still needs an account behind it.
+        ///
+        /// Null if the code was refused or ran out of time. Nothing is linked at this point either
+        /// way — the person holding the emulator still has to say yes.
         /// </summary>
-        public async Task<string> AwaitClaimAsync(string code, CancellationToken cancellationToken)
+        public async Task<string> AwaitClaimAsync(string code, Action onSignedIn, CancellationToken cancellationToken)
         {
+            bool announced = false;
+
             while (true)
             {
                 using JsonDocument state = await GetAsync(
@@ -344,8 +361,13 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                     case "expired":
                         return null;
 
+                    case "signed_in" when !announced:
+                        announced = true;
+                        onSignedIn();
+
+                        goto default;
+
                     default:
-                        // Waiting, or signed in and still typing.
                         await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
 
                         break;

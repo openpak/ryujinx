@@ -524,6 +524,56 @@
         "zh_CN": "",
         "zh_TW": ""
       }
+    },
+    {
+      "ID": "LinkNoPhone",
+      "Translations": {
+        "ar_SA": "",
+        "de_DE": "",
+        "el_GR": "",
+        "en_US": "Sign in with your OpenPak account to link this emulator.",
+        "es_ES": "",
+        "fr_FR": "",
+        "he_IL": "",
+        "it_IT": "",
+        "ja_JP": "",
+        "ko_KR": "",
+        "no_NO": "",
+        "pl_PL": "",
+        "pt_BR": "",
+        "ru_RU": "",
+        "sv_SE": "",
+        "th_TH": "",
+        "tr_TR": "",
+        "uk_UA": "",
+        "zh_CN": "",
+        "zh_TW": ""
+      }
+    },
+    {
+      "ID": "LinkTypeCode",
+      "Translations": {
+        "ar_SA": "",
+        "de_DE": "",
+        "el_GR": "",
+        "en_US": "Signed in. Now enter this code on your phone.",
+        "es_ES": "",
+        "fr_FR": "",
+        "he_IL": "",
+        "it_IT": "",
+        "ja_JP": "",
+        "ko_KR": "",
+        "no_NO": "",
+        "pl_PL": "",
+        "pt_BR": "",
+        "ru_RU": "",
+        "sv_SE": "",
+        "th_TH": "",
+        "tr_TR": "",
+        "uk_UA": "",
+        "zh_CN": "",
+        "zh_TW": ""
+      }
     }
   ]
 }

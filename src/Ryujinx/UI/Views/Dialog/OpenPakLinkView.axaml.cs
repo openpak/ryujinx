@@ -26,6 +26,7 @@ namespace Ryujinx.Ava.UI.Views.Dialog
 
         private FAContentDialog _dialog;
         private string _code;
+        private string _codeDisplay;
         private bool _linked;
 
         public OpenPakLinkView()
@@ -77,21 +78,29 @@ namespace Ryujinx.Ava.UI.Views.Dialog
                 }
 
                 _code = invitation.Code;
+                _codeDisplay = invitation.CodeDisplay;
 
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    CodeText.Text = invitation.CodeDisplay;
 
                     if (invitation.Qr != null)
                     {
                         QrImage.Source = new Bitmap(new MemoryStream(invitation.Qr));
-                    }
 
-                    Instructions.Text = LocaleManager.Instance.UpdateAndGetDynamicValue(
-                        LocaleKeys.MenuBar_OpenPak_LinkScan, invitation.LinkUrl);
+                        Instructions.Text = LocaleManager.Instance.UpdateAndGetDynamicValue(
+                            LocaleKeys.MenuBar_OpenPak_LinkScan, invitation.LinkUrl);
+                    }
+                    else
+                    {
+                        // The server has nowhere to send a phone, so this shows no square at all
+                        // rather than one that would take a phone somewhere else entirely.
+                        PhonePanel.IsVisible = false;
+
+                        Instructions.Text = LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_LinkNoPhone];
+                    }
                 });
 
-                string account = await OpenPakSession.Instance.AwaitClaimAsync(_code, _cancellation.Token);
+                string account = await OpenPakSession.Instance.AwaitClaimAsync(_code, RevealCode, _cancellation.Token);
 
                 if (account == null)
                 {
@@ -114,6 +123,18 @@ namespace Ryujinx.Ava.UI.Views.Dialog
                 // The dialog was closed. Nothing to say about it.
             }
         }
+
+        /// <summary>
+        /// Called the moment a phone signs in, and not a moment before: until then this screen
+        /// shows a square and nothing else worth photographing.
+        /// </summary>
+        private void RevealCode() => Dispatcher.UIThread.Post(() =>
+        {
+            CodeText.Text = _codeDisplay;
+            CodeText.IsVisible = true;
+
+            Instructions.Text = LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_LinkTypeCode];
+        });
 
         private async Task ApproveAsync()
         {

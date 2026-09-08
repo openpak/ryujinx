@@ -1,6 +1,8 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using Gommon;
 using LibHac.Common;
@@ -50,8 +52,7 @@ namespace Ryujinx.Ava.UI.Views.Main
             CompatibilityListMenuItem.Command = Commands.Create(() => CompatibilityListWindow.Show());
             LdnGameListMenuItem.Command = Commands.Create(() => LdnGamesListWindow.Show());
 
-            OpenPakSignInMenuItem.Command = Commands.Create(SignInToOpenPak);
-            OpenPakLinkMenuItem.Command = Commands.Create(LinkOpenPakAccount);
+            OpenPakAccountMenuItem.Command = Commands.Create(OpenPakAccount);
             OpenPakWebsiteMenuItem.Command = Commands.Create(() => OpenHelper.OpenUrl(OpenPakWebsiteUrl));
             OpenPakMenuItem.SubmenuOpened += (_, _) => RefreshOpenPakStatus();
 
@@ -213,58 +214,77 @@ namespace Ryujinx.Ava.UI.Views.Main
         private const string OpenPakWebsiteUrl = "https://openpak.org";
 
         /// <summary>
-        /// Signed in and linked are different states and the menu says which: an unlinked device
-        /// account holds a perfectly valid token that no title server can attach to a person.
+        /// The one OpenPak entry: an invitation to sign in until there is an account, and the
+        /// account itself afterwards — name, picture and all. Signing in and linking are one act
+        /// to the person doing it, so they are one line here.
         /// </summary>
         private void RefreshOpenPakStatus()
         {
             OpenPakSession session = OpenPakSession.Instance;
 
-            OpenPakStatusMenuItem.Header = !session.Enabled
+            OpenPakAccountMenuItem.IsEnabled = session.Enabled;
+            OpenPakAccountMenuItem.Header = !session.Enabled
                 ? LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_NoServer]
-                : session.IsLinked
-                    ? LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.MenuBar_OpenPak_LinkedAs, session.Nickname)
-                    : session.IdToken != null
-                        ? LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.MenuBar_OpenPak_SignedIn, session.ServerAddress)
-                        : LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_NotSignedIn];
+                : session.Nickname ?? LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_SignInPrompt];
 
-            OpenPakSignInMenuItem.IsEnabled = OpenPakLinkMenuItem.IsEnabled = session.Enabled;
+            if (session.IsLinked)
+            {
+                _ = ShowAvatarAsync();
+            }
         }
 
-        private async Task SignInToOpenPak()
+        /// <summary>Their own picture in the menu, once it has been fetched; the glyph until then.</summary>
+        private async Task ShowAvatarAsync()
         {
+            byte[] avatar = await OpenPakSession.Instance.AvatarAsync(CancellationToken.None);
+
+            if (avatar == null)
+            {
+                return;
+            }
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                OpenPakAccountMenuItem.Icon = new Border
+                {
+                    Width = 20,
+                    Height = 20,
+                    CornerRadius = new CornerRadius(10),
+                    ClipToBounds = true,
+                    Child = new Image
+                    {
+                        Source = new Bitmap(new MemoryStream(avatar)),
+                        Stretch = Stretch.UniformToFill,
+                    },
+                };
+            });
+        }
+
+        private async Task OpenPakAccount()
+        {
+            if (OpenPakSession.Instance.IsLinked)
+            {
+                await OpenPakProfileView.Show();
+
+                return;
+            }
+
+            // A device account has to exist before there is anything to attach to a person.
             await OpenPakSession.Instance.EnsureAsync(CancellationToken.None);
 
             if (OpenPakSession.Instance.IdToken == null)
             {
                 NotificationHelper.ShowWarning(LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_Label],
                     LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_SignInFailed]);
+
+                return;
             }
 
-            RefreshOpenPakStatus();
-        }
-
-        /// <summary>
-        /// The console's own link screen, shown in the emulator rather than in a browser: a QR and
-        /// a code for a phone, an e-mail and password for the keyboard that is already here.
-        /// </summary>
-        private async Task LinkOpenPakAccount()
-        {
-            // There is nothing to link until a device account exists.
-            await OpenPakSession.Instance.EnsureAsync(CancellationToken.None);
-
-            bool linked = await OpenPakLinkView.Show();
-
-            if (linked)
+            if (await OpenPakLinkView.Show())
             {
                 NotificationHelper.ShowSuccess(LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_Label],
                     LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.MenuBar_OpenPak_LinkDone,
                         OpenPakSession.Instance.Nickname));
-            }
-            else
-            {
-                NotificationHelper.ShowWarning(LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_Label],
-                    LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_LinkFailed]);
             }
 
             RefreshOpenPakStatus();

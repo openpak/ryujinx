@@ -243,19 +243,11 @@
                 <MenuItem Name="ToggleFileTypesMenuItem" Padding="0" Header="{ext:Locale MenuBarShowFileTypes}" Icon="{ext:Icon fa-solid fa-tags}" Classes="withCheckbox" />
             </MenuItem>
             <MenuItem Name="OpenPakMenuItem" VerticalAlignment="Center" Header="{ext:Locale MenuBar_OpenPak_Label}">
+                <!-- One entry, not two: signing in and linking are the same act to a person, and
+                     once it is done this is where their account lives. -->
                 <MenuItem
-                    Name="OpenPakStatusMenuItem"
-                    IsEnabled="False"
-                    Header="{ext:Locale MenuBar_OpenPak_NotSignedIn}"
-                    Icon="{ext:Icon fa-solid fa-circle-info}" />
-                <Separator />
-                <MenuItem
-                    Name="OpenPakSignInMenuItem"
-                    Header="{ext:Locale MenuBar_OpenPak_SignIn}"
-                    Icon="{ext:Icon fa-solid fa-rotate}" />
-                <MenuItem
-                    Name="OpenPakLinkMenuItem"
-                    Header="{ext:Locale MenuBar_OpenPak_LinkAccount}"
+                    Name="OpenPakAccountMenuItem"
+                    Header="{ext:Locale MenuBar_OpenPak_SignInPrompt}"
                     Icon="{ext:Icon fa-solid fa-user}" />
                 <Separator />
                 <MenuItem

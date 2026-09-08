@@ -61,24 +61,26 @@ the account link exists to put in it.
 
 The device account and the client certificate are kept per server under `<data dir>/openpak/`.
 
-## Linking, and why it is not the console's flow
+## Linking
 
-A console links across two devices: it shows a QR and a six-digit code, a phone signs in and
-types the code back, and the person at the console approves. All of that exists because a
-console cannot receive anything from the browser that does the signing in.
+The console's own link screen, shown in the emulator instead of a browser. Both halves of it,
+because a console only lacks one of them for want of a keyboard:
 
-A PC can. The emulator binds a loopback port, hands that address to OpenPak as the way back, and
-opens the sign-in page in the host's own browser — OpenPak's address, never one of the
-redirected Nintendo hostnames, which resolve for the guest and nothing else. Signing in
-redirects the browser onto that port with an authorization code, which is traded for the token
-that binds the account. No code to read out, no code to type, nothing polled, and the password
-is only ever typed into OpenPak's own page.
+- a **QR and a six-digit code**, for whoever would rather sign in on their phone
+- an **e-mail and password form**, for whoever is already sitting at a keyboard
 
-The state parameter is checked on the way back, because anything on this machine can reach a
-loopback port. The server needed no change for any of it: its authorize endpoint already
-redirects wherever the request asks.
+The server renders both — `POST /connect/1.0.0/qr/new` returns the code, the page a phone should
+open, the QR image and the time it has left — so every OpenPak client draws the same screen and
+none of them carries a QR encoder or invents its own wording. The phone path still ends with a
+person approving in the emulator, as it ends with a person approving on the console: whoever
+holds the code cannot take that step for you.
 
-`OPENPAK_WEBSITE` names the address a browser on this machine can reach.
+A browser was tried and removed. It cannot reach these hostnames from the host in the first
+place (the DNS redirect is the guest's), and what it rendered was the television page — telling
+someone with a keyboard in front of them to go and find their phone.
+
+For the QR half to be scannable, the server's `NX_LINK_BASE_URL` has to name an address a phone
+can reach. The form half needs nothing.
 
 ## Status
 

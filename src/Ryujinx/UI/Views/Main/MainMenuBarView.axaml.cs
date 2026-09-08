@@ -245,25 +245,15 @@ namespace Ryujinx.Ava.UI.Views.Main
         }
 
         /// <summary>
-        /// A console links across two devices — a QR for a phone, a code typed back, approval on
-        /// the console — because a console cannot receive anything from the browser signing it in.
-        /// A PC can: the emulator listens on a loopback port, the browser is sent to OpenPak with
-        /// that port as the way back, and signing in redirects straight onto it.
+        /// The console's own link screen, shown in the emulator rather than in a browser: a QR and
+        /// a code for a phone, an e-mail and password for the keyboard that is already here.
         /// </summary>
         private async Task LinkOpenPakAccount()
         {
             // There is nothing to link until a device account exists.
             await OpenPakSession.Instance.EnsureAsync(CancellationToken.None);
 
-            bool linked = await OpenPakSession.Instance.LinkAsync(url =>
-                Dispatcher.UIThread.Post(() =>
-                {
-                    OpenHelper.OpenUrl(url);
-
-                    NotificationHelper.ShowInformation(
-                        LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_LinkTitle],
-                        LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_LinkMessage]);
-                }), CancellationToken.None);
+            bool linked = await OpenPakLinkView.Show();
 
             if (linked)
             {

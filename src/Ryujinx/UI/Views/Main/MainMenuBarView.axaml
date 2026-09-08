@@ -242,6 +242,27 @@
                  <Separator />
                 <MenuItem Name="ToggleFileTypesMenuItem" Padding="0" Header="{ext:Locale MenuBarShowFileTypes}" Icon="{ext:Icon fa-solid fa-tags}" Classes="withCheckbox" />
             </MenuItem>
+            <MenuItem Name="OpenPakMenuItem" VerticalAlignment="Center" Header="{ext:Locale MenuBar_OpenPak_Label}">
+                <MenuItem
+                    Name="OpenPakStatusMenuItem"
+                    IsEnabled="False"
+                    Header="{ext:Locale MenuBar_OpenPak_NotSignedIn}"
+                    Icon="{ext:Icon fa-solid fa-circle-info}" />
+                <Separator />
+                <MenuItem
+                    Name="OpenPakSignInMenuItem"
+                    Header="{ext:Locale MenuBar_OpenPak_SignIn}"
+                    Icon="{ext:Icon fa-solid fa-rotate}" />
+                <MenuItem
+                    Name="OpenPakLinkMenuItem"
+                    Header="{ext:Locale MenuBar_OpenPak_LinkAccount}"
+                    Icon="{ext:Icon fa-solid fa-user}" />
+                <Separator />
+                <MenuItem
+                    Name="OpenPakWebsiteMenuItem"
+                    Header="{ext:Locale MenuBar_OpenPak_Website}"
+                    Icon="{ext:Icon fa-solid fa-globe}" />
+            </MenuItem>
             <MenuItem VerticalAlignment="Center" Header="{ext:Locale MenuBarHelp}">
                 <MenuItem
                     Name="AboutWindowMenuItem"

@@ -3,6 +3,7 @@ using Microsoft.IdentityModel.Tokens;
 using Ryujinx.Common.Logging;
 using Ryujinx.HLE.HOS.Kernel.Threading;
 using Ryujinx.HLE.HOS.Services.Account.Acc.AsyncContext;
+using Ryujinx.HLE.HOS.Services.Account.OpenPak;
 using System;
 using System.Collections.Generic;
 using System.Security.Claims;
@@ -15,8 +16,22 @@ namespace Ryujinx.HLE.HOS.Services.Account.Acc.AccountService
 {
     class ManagerServer
     {
-        // TODO: Determine where and how NetworkServiceAccountId is set.
-        private const long NetworkServiceAccountId = 0xcafe;
+        // What a console with no network account has always answered here.
+        private const long OfflineNetworkServiceAccountId = 0xcafe;
+
+        /// <summary>
+        /// The BAAS user id OpenPak issued this install, or the offline placeholder when the
+        /// emulator is not signed in to anything.
+        /// </summary>
+        private static long NetworkServiceAccountId
+        {
+            get
+            {
+                ulong openPak = OpenPakSession.Instance.NetworkServiceAccountId;
+
+                return openPak != 0 ? (long)openPak : OfflineNetworkServiceAccountId;
+            }
+        }
 
 #pragma warning disable IDE0052 // Remove unread private member
         private readonly UserId _userId;
@@ -30,6 +45,11 @@ namespace Ryujinx.HLE.HOS.Services.Account.Acc.AccountService
             _userId = userId;
         }
 
+        /// <summary>
+        /// A locally signed token, for when there is no OpenPak server to get a real one from.
+        /// Nothing verifies it — the key is made up on the spot — but a game that only wants a
+        /// well-formed token to hand around keeps working offline, as it always has.
+        /// </summary>
         private static string GenerateIdToken()
         {
             using RSA provider = RSA.Create(2048);
@@ -116,20 +136,16 @@ namespace Ryujinx.HLE.HOS.Services.Account.Acc.AccountService
             //       in the "account:/" savedata.
             //       Then its read data, use dauth API with this data to get the Token Id and probably store the dauth response
             //       in "su/cache/USERID_IN_UUID_STRING.dat" (where USERID_IN_UUID_STRING is formatted as "%08x-%04x-%04x-%02x%02x-%08x%04x") in the "account:/" savedata.
-            //       Since we don't support online services, we can stub it.
 
-            Logger.Stub?.PrintStub(LogClass.ServiceAcc);
-
-            // TODO: Use a real function instead, with the CancellationToken.
-            await Task.CompletedTask;
+            // This is the call the guest makes before reading the cache, which makes it the one
+            // place a slow network round trip belongs. LoadIdTokenCache below is synchronous.
+            await OpenPakSession.Instance.EnsureAsync(token);
         }
 
         public ResultCode LoadIdTokenCache(ServiceCtx context)
         {
             ulong bufferPosition = context.Request.ReceiveBuff[0].Position;
-#pragma warning disable IDE0059 // Remove unnecessary value assignment
             ulong bufferSize = context.Request.ReceiveBuff[0].Size;
-#pragma warning restore IDE0059
 
             // NOTE: This opens the file at "su/cache/USERID_IN_UUID_STRING.dat" (where USERID_IN_UUID_STRING is formatted as "%08x-%04x-%04x-%02x%02x-%08x%04x")
             //       in the "account:/" savedata and writes some data in the buffer.
@@ -147,13 +163,31 @@ namespace Ryujinx.HLE.HOS.Services.Account.Acc.AccountService
             }
             */
 
-            if (_cachedTokenData == null || DateTime.UtcNow > _cachedTokenExpiry)
+            string openPakToken = OpenPakSession.Instance.IdToken;
+
+            if (openPakToken != null)
+            {
+                // The session decides when this expires and refreshes it in EnsureIdTokenCacheAsync.
+                _cachedTokenData = Encoding.ASCII.GetBytes(openPakToken);
+                _cachedTokenExpiry = DateTime.MaxValue;
+            }
+            else if (_cachedTokenData == null || DateTime.UtcNow > _cachedTokenExpiry)
             {
                 _cachedTokenExpiry = DateTime.UtcNow + TimeSpan.FromHours(3);
                 _cachedTokenData = Encoding.ASCII.GetBytes(GenerateIdToken());
             }
 
             byte[] tokenData = _cachedTokenData;
+
+            // A real token is several times the size of the made-up one, so the buffer the guest
+            // offered is worth checking before writing into its memory.
+            if ((ulong)tokenData.Length > bufferSize)
+            {
+                Logger.Warning?.Print(LogClass.ServiceAcc,
+                    $"[OpenPak] id_token is {tokenData.Length} bytes, guest buffer is {bufferSize}");
+
+                return ResultCode.InvalidIdTokenCacheBufferSize;
+            }
 
             context.Memory.Write(bufferPosition, tokenData);
             context.ResponseData.Write(tokenData.Length);

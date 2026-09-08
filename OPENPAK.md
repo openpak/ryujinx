@@ -26,17 +26,17 @@ Upstream is `upstream` (`git.ryujinx.app`); `origin` is `openpak/ryujinx`.
 
 ## What is missing, in the order it blocks a title
 
-1. **Trusting the OpenPak CA.** `SslManagedSocketConnection` calls `AuthenticateAsClient` with
+1. ~~**Trusting the OpenPak CA.**~~ **Done.** `SslManagedSocketConnection` calls `AuthenticateAsClient` with
    default validation, so the game's TLS peer is checked against the *host machine's* trust
    store. OpenPak serves `*.nintendo.net` names from its own CA, which is not there and cannot
    be publicly issued. Fix: pin the OpenPak CA in the emulator — a validation callback that
    accepts a chain rooted at `openpak-ca.pem` in the Ryujinx data dir, for redirected hosts only.
    Not a blanket "accept any certificate" bypass: the whole point of the redirect is that
    whoever holds that name holds the session.
-2. **Device auth.** `dauth:0` (`Services/Account/Dauth/IService.cs`) is an empty stub. OpenPak's
+2. ~~**Device auth.**~~ **Done.** `dauth:0` (`Services/Account/Dauth/IService.cs`) is an empty stub. OpenPak's
    `nx-baas` serves the dauth/aauth/dcert surface; the emulator has to actually ask for a device
    token instead of never asking.
-3. **The BAAS access token.** `acc:aa` (`IBaasAccessTokenAccessor`) is an empty stub and
+3. ~~**The BAAS access token.**~~ **Done.** `acc:aa` (`IBaasAccessTokenAccessor`) is an empty stub and
    `ManagerServer`'s id-token commands are `PrintStub`. A title online needs an id_token carrying
    OpenPak's `nnex` claim, signed by the key `nx-baas` publishes as JWKS, so NPLN/NEX/Photon
    servers resolve one identity per account.
@@ -52,6 +52,24 @@ One setting decides which server the emulator talks to, because that server rece
 account token. Default: OpenPak production. An override is kept for local stacks and is
 restricted to loopback or an `openpak.org` host over TLS — anything else is refused and logged.
 
+## How it is configured, for now
+
+`OPENPAK_SERVER=host[:port]` and `OPENPAK_CA=/path/to/ca.pem` (default
+`<data dir>/openpak/ca.pem`). Unset, or no CA file, and the emulator behaves exactly as upstream
+does: offline, with the made-up id_token it has always produced. A GUI setting replaces this once
+the account link exists to put in it.
+
+The device account and the client certificate are kept per server under `<data dir>/openpak/`.
+
 ## Status
 
-Scaffold. Repos exist, upstream is tracked, nothing of the above is implemented yet.
+Signing in works. The emulator completes the console's own chain against a live OpenPak
+(`dotnet test --filter OpenPakSessionTests`, with a server configured) and a game asking acc:u0
+for an id_token now gets a real one.
+
+What is left before a title is actually online:
+
+- **The account link.** The device account is anonymous until it is bound to an OpenPak account,
+  and the id_token carries no `nnex` claim until then — so title servers see no identity. The
+  console does this through a browser and a six-digit code; the emulator has to do the same.
+- **NAT check** (`nncs1`/`nncs2`, UDP), and whatever a first title turns out to want.

@@ -1,3 +1,4 @@
+using Ryujinx.HLE.HOS.Services.Account.OpenPak;
 using Ryujinx.HLE.HOS.Services.Sockets.Bsd;
 using Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl;
 using Ryujinx.HLE.HOS.Services.Sockets.Bsd.Proxy;
@@ -8,6 +9,7 @@ using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
 
 namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
 {
@@ -114,10 +116,19 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
             }
         }
 
+        /// <summary>
+        /// Normal validation, plus the OpenPak CA when one is configured. OpenPak answers to
+        /// Nintendo's own hostnames, which no public CA can issue for, so a title's TLS has
+        /// nothing else it could trust; without this every online request fails the handshake.
+        /// Anything not issued by that CA is refused exactly as before.
+        /// </summary>
+        private static bool ValidateRemoteCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors errors)
+            => errors == SslPolicyErrors.None || (OpenPakServer.Current?.Validate(certificate, errors) ?? false);
+
         public ResultCode Handshake(string hostName)
         {
             StartSslOperation();
-            _stream = new SslStream(new NetworkStream(((DefaultSocket)((ManagedSocket)Socket).Socket).BaseSocket, false), false, null, null);
+            _stream = new SslStream(new NetworkStream(((DefaultSocket)((ManagedSocket)Socket).Socket).BaseSocket, false), false, ValidateRemoteCertificate, null);
             hostName = RetrieveHostName(hostName);
             _stream.AuthenticateAsClient(hostName, null, TranslateSslVersion(_sslVersion), false);
             EndSslOperation();

@@ -60,6 +60,9 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         private DateTime _idTokenExpiry;
         private ulong _networkServiceAccountId;
         private string _nickname;
+        private string _friendCode;
+        private string _avatarUrl;
+        private byte[] _avatar;
 
         /// <summary>An OpenPak server is configured and reachable enough to have been set up.</summary>
         public bool Enabled => Server != null;
@@ -75,6 +78,9 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 
         /// <summary>The OpenPak account this install is linked to, or null while it is anonymous.</summary>
         public string Nickname => _nickname;
+
+        /// <summary>The account's friend code, as other players would type it, or null.</summary>
+        public string FriendCode => _friendCode;
 
         /// <summary>
         /// Whether the id_token carries an OpenPak identity. Signed in is not linked: an unlinked
@@ -183,6 +189,11 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             _idTokenExpiry = DateTime.UtcNow + TimeSpan.FromSeconds(login.RootElement.GetProperty("expiresIn").GetInt32());
             _networkServiceAccountId = ParseUserId(login.RootElement.GetProperty("user").GetProperty("id").GetString());
             _nickname = NicknameOf(login.RootElement);
+            _friendCode = FriendCodeOf(login.RootElement);
+            _avatarUrl = login.RootElement.GetProperty("user").TryGetProperty("thumbnailUrl", out JsonElement thumbnail)
+                ? thumbnail.GetString()
+                : null;
+            _avatar = null;
 
             Logger.Info?.Print(LogClass.ServiceAcc, _nickname != null
                 ? $"[OpenPak] Signed in as {_nickname} on {Server.Address}"
@@ -482,6 +493,40 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             string value = nickname.GetString();
 
             return string.IsNullOrEmpty(value) ? null : value;
+        }
+
+        /// <summary>The friend code the account was issued, or null before it has one.</summary>
+        private static string FriendCodeOf(JsonElement login)
+            => login.GetProperty("user").TryGetProperty("links", out JsonElement links)
+                && links.TryGetProperty("friendCode", out JsonElement code)
+                && code.TryGetProperty("id", out JsonElement id)
+                    ? id.GetString()
+                    : null;
+
+        /// <summary>
+        /// The account's picture, fetched once and kept. It comes from the same server as
+        /// everything else here, over the same pinned connection: an avatar url is still a url
+        /// this emulator was told to fetch by whoever answers as OpenPak.
+        /// </summary>
+        public async Task<byte[]> AvatarAsync(CancellationToken cancellationToken)
+        {
+            if (_avatar != null || _avatarUrl == null || !Enabled)
+            {
+                return _avatar;
+            }
+
+            try
+            {
+                _http ??= Server.CreateClient();
+
+                return _avatar = await _http.GetByteArrayAsync(_avatarUrl, cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                Logger.Warning?.Print(LogClass.ServiceAcc, $"[OpenPak] Could not fetch the avatar: {exception.Message}");
+
+                return null;
+            }
         }
 
         /// <summary>The BAAS user id is 16 hex digits; the guest wants those 8 bytes as a u64.</summary>

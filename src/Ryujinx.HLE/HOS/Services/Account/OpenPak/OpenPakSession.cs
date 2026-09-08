@@ -61,8 +61,10 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         private ulong _networkServiceAccountId;
         private string _nickname;
         private string _friendCode;
+        private string _userId;
         private string _avatarUrl;
         private byte[] _avatar;
+        private Task _heartbeat;
 
         /// <summary>An OpenPak server is configured and reachable enough to have been set up.</summary>
         public bool Enabled => Server != null;
@@ -187,13 +189,16 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 
             _idToken = login.RootElement.GetProperty("idToken").GetString();
             _idTokenExpiry = DateTime.UtcNow + TimeSpan.FromSeconds(login.RootElement.GetProperty("expiresIn").GetInt32());
-            _networkServiceAccountId = ParseUserId(login.RootElement.GetProperty("user").GetProperty("id").GetString());
+            _userId = login.RootElement.GetProperty("user").GetProperty("id").GetString();
+            _networkServiceAccountId = ParseUserId(_userId);
             _nickname = NicknameOf(login.RootElement);
             _friendCode = FriendCodeOf(login.RootElement);
             _avatarUrl = login.RootElement.GetProperty("user").TryGetProperty("thumbnailUrl", out JsonElement thumbnail)
                 ? thumbnail.GetString()
                 : null;
             _avatar = null;
+
+            StartHeartbeat();
 
             Logger.Info?.Print(LogClass.ServiceAcc, _nickname != null
                 ? $"[OpenPak] Signed in as {_nickname} on {Server.Address}"
@@ -428,6 +433,58 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             }
 
             return JsonDocument.Parse(body);
+        }
+
+        /// <summary>
+        /// Keep saying we are here, which is the only way anyone can tell that we are.
+        ///
+        /// Nothing reaches the server when a process is closed — an emulator that is gone sends
+        /// nothing, including "I am gone" — so being online is a claim with a short life that has
+        /// to be renewed. Stop renewing and the account drops offline on its own, which is what
+        /// closing the window does. The console does this from its friends sysmodule; this is the
+        /// same request on the same path.
+        /// </summary>
+        private void StartHeartbeat()
+        {
+            if (_heartbeat != null || _userId == null || _device == null)
+            {
+                return;
+            }
+
+            _heartbeat = Task.Run(async () =>
+            {
+                while (true)
+                {
+                    // Well inside the lease the server hands out, so one lost request is not a
+                    // person blinking offline.
+                    await Task.Delay(TimeSpan.FromSeconds(25));
+
+                    try
+                    {
+                        using HttpRequestMessage request = new(HttpMethod.Patch,
+                            $"https://{BaasHost}/1.0.0/users/{_userId}/device_accounts/{_device.Id}")
+                        {
+                            Content = new StringContent(
+                                """[{"op":"replace","path":"/presence/state","value":"ONLINE"}]""",
+                                Encoding.UTF8, "application/json"),
+                        };
+
+                        using HttpResponseMessage response = await _http.SendAsync(request);
+
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            Logger.Debug?.Print(LogClass.ServiceAcc,
+                                $"[OpenPak] Presence update returned {(int)response.StatusCode}");
+                        }
+                    }
+                    catch (Exception exception)
+                    {
+                        // Presence is not worth a louder failure than this: the account simply
+                        // goes quiet, which is exactly what it should look like.
+                        Logger.Debug?.Print(LogClass.ServiceAcc, $"[OpenPak] Presence update failed: {exception.Message}");
+                    }
+                }
+            });
         }
 
         private async Task<JsonDocument> PostAsync(string url, HttpContent content, string bearer, CancellationToken cancellationToken)

@@ -1,13 +1,13 @@
 name: release
 
 # The OpenPak build of Ryujinx. Every push to the default branch publishes the four desktop
-# targets (Linux x64 and arm64, Windows x64, macOS universal) as workflow artifacts; a v* tag
+# targets (Linux x64 and arm64, Windows x64, macOS universal) as workflow artifacts; an openpak-v* tag
 # also attaches them to a GitHub Release. Upstream's
 # Forgejo workflows stay untouched in .forgejo/ for merging; this one is ours.
 on:
   push:
     branches: [master]
-    tags: ['v*']
+    tags: ['openpak-v*']
   workflow_dispatch:
 
 permissions:
@@ -37,7 +37,7 @@ jobs:
           key: nuget-${{ runner.os }}-${{ hashFiles('**/global.json', '**/*.csproj', '**/Directory.Packages.props') }}
       - id: v
         run: |
-          case "$GITHUB_REF" in refs/tags/v*) echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT" ;; *) echo "version=0.0.0" >> "$GITHUB_OUTPUT" ;; esac
+          case "$GITHUB_REF" in refs/tags/openpak-v*) echo "version=${GITHUB_REF_NAME#openpak-v}" >> "$GITHUB_OUTPUT" ;; *) echo "version=0.0.0" >> "$GITHUB_OUTPUT" ;; esac
           echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
       - name: Publish
         run: >
@@ -87,7 +87,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
       - id: v
         run: |
-          case "$GITHUB_REF" in refs/tags/v*) echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT" ;; *) echo "version=0.0.0" >> "$GITHUB_OUTPUT" ;; esac
+          case "$GITHUB_REF" in refs/tags/openpak-v*) echo "version=${GITHUB_REF_NAME#openpak-v}" >> "$GITHUB_OUTPUT" ;; *) echo "version=0.0.0" >> "$GITHUB_OUTPUT" ;; esac
           echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
       - name: Publish and bundle
         run: >
@@ -106,7 +106,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/openpak-v')
     needs: [build, macos]
     runs-on: ubuntu-latest
     steps:

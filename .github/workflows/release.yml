@@ -1,7 +1,8 @@
 name: release
 
-# The OpenPak build of Ryujinx. Every push to the default branch publishes the three desktop
-# targets as workflow artifacts; a v* tag also attaches them to a GitHub Release. Upstream's
+# The OpenPak build of Ryujinx. Every push to the default branch publishes the four desktop
+# targets (Linux x64 and arm64, Windows x64, macOS universal) as workflow artifacts; a v* tag
+# also attaches them to a GitHub Release. Upstream's
 # Forgejo workflows stay untouched in .forgejo/ for merging; this one is ours.
 on:
   push:
@@ -59,9 +60,54 @@ jobs:
           path: ryujinx-openpak-*
           if-no-files-found: error
 
+  macos:
+    # Upstream's own recipe: the universal .app is assembled on Linux with LLVM's lipo and
+    # rcodesign, which costs a tenth of a macOS runner minute and needs no Apple identity
+    # (the bundle is ad-hoc signed, as upstream's is).
+    name: macos-universal
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/global.json', '**/*.csproj', '**/Directory.Packages.props') }}
+      - name: LLVM 17 and rcodesign
+        run: |
+          set -e
+          wget -q https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && sudo ./llvm.sh 17
+          gh release download -R indygreg/apple-platform-rs --pattern 'apple-codesign-*-x86_64-unknown-linux-musl.tar.gz' -O rcodesign.tar.gz
+          tar -xzf rcodesign.tar.gz --wildcards --strip-components=1 '*/rcodesign'
+          sudo install -m 755 rcodesign /usr/local/bin/rcodesign && rcodesign --version
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - id: v
+        run: |
+          case "$GITHUB_REF" in refs/tags/v*) echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT" ;; *) echo "version=0.0.0" >> "$GITHUB_OUTPUT" ;; esac
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Publish and bundle
+        run: >
+          bash distribution/macos/create_macos_pr_build_ava.sh . publish_tmp publish ./distribution/macos/entitlements.xml
+          "${{ steps.v.outputs.version }}" "${{ steps.v.outputs.sha }}" Release "-p:ExtraDefineConstants=DISABLE_UPDATER"
+      - name: Name it like the others
+        run: |
+          set -e
+          f=$(ls publish/*.tar.gz | head -1)
+          mv "$f" "ryujinx-openpak-${{ steps.v.outputs.version }}-macos-universal.app.tar.gz"
+          ls -l ryujinx-openpak-*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ryujinx-openpak-macos-universal
+          path: ryujinx-openpak-*
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

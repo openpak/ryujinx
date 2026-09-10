@@ -1,0 +1,76 @@
+name: release
+
+# The OpenPak build of Ryujinx. Every push to the default branch publishes the three desktop
+# targets as workflow artifacts; a v* tag also attaches them to a GitHub Release. Upstream's
+# Forgejo workflows stay untouched in .forgejo/ for merging; this one is ours.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+
+jobs:
+  build:
+    name: ${{ matrix.rid }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [linux-x64, linux-arm64, win-x64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/global.json', '**/*.csproj', '**/Directory.Packages.props') }}
+      - id: v
+        run: |
+          case "$GITHUB_REF" in refs/tags/v*) echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT" ;; *) echo "version=0.0.0" >> "$GITHUB_OUTPUT" ;; esac
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Publish
+        run: >
+          dotnet publish src/Ryujinx -c Release -r ${{ matrix.rid }} --self-contained -o publish
+          -p:Version=${{ steps.v.outputs.version }} -p:SourceRevisionId=${{ steps.v.outputs.sha }}
+          -p:DebugType=embedded -p:ExtraDefineConstants=DISABLE_UPDATER
+      - name: Pack
+        run: |
+          set -e
+          name="ryujinx-openpak-${{ steps.v.outputs.version }}-${{ matrix.rid }}"
+          rm -f publish/*.pdb
+          case "${{ matrix.rid }}" in
+            win-*) (cd publish && zip -qr "../$name.zip" .) ;;
+            *)     chmod +x publish/Ryujinx* 2>/dev/null || true; tar -C publish -czf "$name.tar.gz" . ;;
+          esac
+          ls -l "$name".*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ryujinx-openpak-${{ matrix.rid }}
+          path: ryujinx-openpak-*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ryujinx-openpak-*
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" ryujinx-openpak-* --repo "$GITHUB_REPOSITORY"
+          --title "Ryujinx (OpenPak) $GITHUB_REF_NAME"
+          --notes "Upstream Ryujinx with the OpenPak network layer. Set OPENPAK_SERVER and drop the CA in the data directory; see OPENPAK.md."

@@ -5,7 +5,7 @@ name: release
 # Forgejo workflows stay untouched in .forgejo/ for merging; this one is ours.
 on:
   push:
-    branches: [main]
+    branches: [master]
     tags: ['v*']
   workflow_dispatch:
 

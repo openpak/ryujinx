@@ -14,6 +14,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Key = Ryujinx.Common.Configuration.Hid.Key;
+using OpenPakConfig = Ryujinx.OpenPak.OpenPakConfig;
 using PhysicalKey = Ryujinx.Common.Configuration.Hid.PhysicalKey;
 using RyuLogger = Ryujinx.Common.Logging.Logger;
 
@@ -167,6 +168,11 @@ namespace Ryujinx.Ava.Systems.Configuration
             Multiplayer.DisableP2p.Value = cff.MultiplayerDisableP2p;
             Multiplayer.LdnPassphrase.Value = cff.MultiplayerLdnPassphrase;
             Multiplayer.LdnServer.Value = cff.LdnServer;
+
+            OpenPak.Enabled.Value = cff.OpenPakEnabled;
+            OpenPak.ConsoleServer.Value = cff.OpenPakConsoleServer;
+            OpenPak.WebsiteUrl.Value = cff.OpenPakWebsiteUrl;
+            OpenPak.RedirectGuestDns.Value = cff.OpenPakRedirectGuestDns;
 
             Debug.EnableGdbStub.Value = shouldLoadFromFile ? cff.EnableGdbStub : Debug.EnableGdbStub.Value; // Get from global config only
             Debug.GdbStubPort.Value = shouldLoadFromFile ? cff.GdbStubPort : Debug.GdbStubPort.Value; // Get from global config only
@@ -542,7 +548,16 @@ namespace Ryujinx.Ava.Systems.Configuration
                     if (cff.AudioBackend is AudioBackend.SDL2)
                         cff.AudioBackend = AudioBackend.SDL3;
                 }),
-                (72, static cff => cff.GCLowLatency = false)
+                (72, static cff => cff.GCLowLatency = false),
+                (73, static cff =>
+                {
+                    // An existing install has never been asked about OpenPak, so it stays offline
+                    // and upstream until somebody turns it on in the settings window.
+                    cff.OpenPakEnabled = false;
+                    cff.OpenPakConsoleServer = string.Empty;
+                    cff.OpenPakWebsiteUrl = OpenPakConfig.DefaultWebsiteUrl;
+                    cff.OpenPakRedirectGuestDns = true;
+                })
             );
     }
 }

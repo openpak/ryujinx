@@ -1,0 +1,87 @@
+<UserControl
+    x:Class="Ryujinx.Ava.UI.Views.OpenPak.OpenPakAccountView"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:ext="clr-namespace:Ryujinx.Ava.Common.Markup"
+    xmlns:viewModels="clr-namespace:Ryujinx.Ava.UI.ViewModels"
+    mc:Ignorable="d"
+    x:DataType="viewModels:OpenPakViewModel">
+    <Design.DataContext>
+        <viewModels:OpenPakViewModel />
+    </Design.DataContext>
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="20" Spacing="16">
+
+            <!-- Signed out: one thing to do, and it is the thing everything else needs. -->
+            <StackPanel IsVisible="{Binding SignedOut}" Spacing="12" HorizontalAlignment="Center" Margin="0,40,0,0">
+                <TextBlock
+                    Text="{ext:Locale Dialog_OpenPak_NeedSignIn}"
+                    TextWrapping="Wrap"
+                    HorizontalAlignment="Center" />
+                <Button
+                    Name="SignInButton"
+                    Classes="accent"
+                    Content="{ext:Locale Dialog_OpenPak_SignIn}"
+                    HorizontalAlignment="Center"
+                    MinWidth="160" />
+            </StackPanel>
+
+            <StackPanel IsVisible="{Binding SignedIn}" Spacing="16">
+                <StackPanel Orientation="Horizontal" Spacing="16">
+                    <Border
+                        Width="72"
+                        Height="72"
+                        CornerRadius="36"
+                        ClipToBounds="True"
+                        Background="{DynamicResource ThemeControlBorderColor}">
+                        <Image Source="{Binding Avatar}" Stretch="UniformToFill" />
+                    </Border>
+                    <StackPanel VerticalAlignment="Center" Spacing="4">
+                        <TextBlock Text="{Binding DisplayName}" FontSize="22" FontWeight="Bold" />
+                        <TextBlock Text="{Binding ServerAddress}" Opacity="0.7" />
+                    </StackPanel>
+                </StackPanel>
+
+                <Separator Height="1" />
+
+                <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="10">
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="{ext:Locale Dialog_OpenPak_AccountFriendCode}" VerticalAlignment="Center" />
+                    <SelectableTextBlock Grid.Row="0" Grid.Column="1" Text="{Binding FriendCode}" VerticalAlignment="Center" FontFamily="{StaticResource JetBrainsMono}" />
+                    <Button Grid.Row="0" Grid.Column="2" Name="CopyCodeButton" Content="{ext:Locale Dialog_OpenPak_AccountCopy}" MinWidth="80" />
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="{ext:Locale Dialog_OpenPak_AccountSwitchIdentity}" VerticalAlignment="Center" />
+                    <SelectableTextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SwitchPid}" VerticalAlignment="Center" />
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="{ext:Locale Dialog_OpenPak_AccountConsoles}" VerticalAlignment="Center" />
+                    <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding LinkedConsoles}" VerticalAlignment="Center" TextWrapping="Wrap" />
+
+                    <TextBlock Grid.Row="3" Grid.Column="0" Text="{ext:Locale Dialog_OpenPak_StatusPlayers}" VerticalAlignment="Center" />
+                    <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding PlayersOnline}" VerticalAlignment="Center" />
+                </Grid>
+
+                <Separator Height="1" />
+
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Button Name="RefreshButton" Content="{ext:Locale Dialog_OpenPak_Refresh}" IsEnabled="{Binding Ready}" MinWidth="110" />
+                    <Button Name="SignOutButton" Content="{ext:Locale Dialog_OpenPak_SettingsSignOut}" IsEnabled="{Binding Ready}" MinWidth="110" />
+                </StackPanel>
+
+                <!-- Signing in is a person's account; linking is the emulated console's identity
+                     inside it. A title asking acc:u0 for an id_token needs the second, so it is
+                     offered here, next to the first, and hidden once it is done. -->
+                <StackPanel Name="ConsolePanel" Spacing="8" IsVisible="False">
+                    <Separator Height="1" />
+                    <TextBlock Text="{ext:Locale MenuBar_OpenPak_LinkTitle}" FontWeight="SemiBold" />
+                    <TextBlock Name="ConsoleStatus" Opacity="0.8" TextWrapping="Wrap" FontSize="12" />
+                    <Button
+                        Name="LinkConsoleButton"
+                        Content="{ext:Locale MenuBar_OpenPak_LinkAccount}"
+                        HorizontalAlignment="Left"
+                        MinWidth="200" />
+                </StackPanel>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

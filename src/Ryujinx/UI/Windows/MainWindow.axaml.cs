@@ -28,9 +28,11 @@ using Ryujinx.Graphics.Gpu;
 using Ryujinx.HLE.FileSystem;
 using Ryujinx.HLE.HOS;
 using Ryujinx.HLE.HOS.Services.Account.Acc;
+using Ryujinx.HLE.HOS.Services.Account.OpenPak;
 using Ryujinx.Input.HLE;
 using Ryujinx.Input.SDL3;
 using Ryujinx.Input;
+using Ryujinx.OpenPak;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -439,6 +441,76 @@ namespace Ryujinx.Ava.UI.Windows
 
             ApplicationGrid.ApplicationOpened += Application_Opened;
             ApplicationList.ApplicationOpened += Application_Opened;
+
+            // Friends announcing themselves belong to the main window because they happen while
+            // the person is anywhere at all — mid-game, in settings, nowhere near the OpenPak
+            // dialog. The account only refreshes while signed in, so these stay quiet otherwise.
+            OpenPakAccount.Instance.FriendCameOnline +=
+                friend => AnnounceFriend(friend, LocaleKeys.Dialog_OpenPak_NotificationFriendOnline);
+            OpenPakAccount.Instance.FriendStartedPlaying +=
+                friend => AnnounceFriend(friend, LocaleKeys.Dialog_OpenPak_NotificationFriendPlaying);
+
+            // An invitation is only worth anything while the person who sent it is still waiting,
+            // so it is said out loud wherever they are, the same as a friend coming online.
+            OpenPakSession.Instance.InvitationArrived += AnnounceInvitation;
+
+            // One conditional request per launch, best-effort: the profile decides which names
+            // the console redirects, so a title OpenPak adds on a new hostname works without a
+            // new build. It is off with the integration, and it never waits for anything.
+            if (OpenPakConfig.Enabled)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await OpenPakNetworkProfileService.RefreshAsync(CancellationToken.None);
+                    }
+                    catch
+                    {
+                        // A profile that cannot be fetched is a log line inside RefreshAsync and
+                        // a game that starts anyway.
+                    }
+
+                    // Sign in now rather than when somebody opens the OpenPak window: being online
+                    // is the point of the integration, and until this runs the account is offline,
+                    // invisible to friends, and hears about no invitation. It is the same call the
+                    // Account page makes, and it fails as quietly.
+                    await OpenPakSession.Instance.EnsureAsync(CancellationToken.None);
+
+                    // The account cache keeps friends and presence warm on its own timer once it
+                    // is started, and starting it is all the OpenPak window's Refresh did.
+                    OpenPakAccount.Instance.Start();
+                });
+            }
+        }
+
+        /// <summary>Toast an invitation as it arrives, named the way the game list names titles.</summary>
+        private void AnnounceInvitation(OpenPakInvitation invitation) => Dispatcher.UIThread.Post(() =>
+            NotificationHelper.ShowInformation("OpenPak",
+                LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_NotificationInvitation,
+                    invitation.From,
+                    ViewModel.ApplicationLibrary.Applications.Items.FirstOrDefault(application =>
+                        application.IdString.Equals(invitation.TitleId, StringComparison.OrdinalIgnoreCase))?.Name
+                            ?? invitation.TitleId.ToUpperInvariant())));
+
+        /// <summary>Toast one presence change, with the title named the way the game list names it.</summary>
+        private void AnnounceFriend(OpenPakFriend friend, LocaleKeys key)
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                string name = string.IsNullOrWhiteSpace(friend.DisplayName) ? "A friend" : friend.DisplayName;
+                string title = string.Empty;
+
+                if (!string.IsNullOrEmpty(friend.TitleId))
+                {
+                    title = ViewModel.ApplicationLibrary.Applications.Items.FirstOrDefault(application =>
+                        application.IdString.Equals(friend.TitleId, StringComparison.OrdinalIgnoreCase))?.Name
+                            ?? friend.TitleId.ToUpperInvariant();
+                }
+
+                NotificationHelper.ShowInformation("OpenPak",
+                    LocaleManager.Instance.UpdateAndGetDynamicValue(key, name, title));
+            });
         }
 
         private void SetWindowSizePosition()

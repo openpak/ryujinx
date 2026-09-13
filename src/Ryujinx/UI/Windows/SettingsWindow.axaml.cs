@@ -91,6 +91,10 @@ namespace Ryujinx.Ava.UI.Windows
                     case "AudioPage":
                         NavPanel.Content = AudioPage;
                         break;
+                    case "OpenPakPage":
+                        OpenPakPage.DataContext = ViewModel;
+                        NavPanel.Content = OpenPakPage;
+                        break;
                     case "NetworkPage":
                         NetworkPage.ViewModel = ViewModel;
                         NavPanel.Content = NetworkPage;

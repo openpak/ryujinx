@@ -250,10 +250,45 @@
                     Header="{ext:Locale MenuBar_OpenPak_SignInPrompt}"
                     Icon="{ext:Icon fa-solid fa-user}" />
                 <Separator />
+                <!-- The same seven items, in the same order, as every other OpenPak emulator
+                     build: somebody moving between them is never looking for a moved menu. -->
+                <MenuItem
+                    Name="OpenPakFriendsMenuItem"
+                    Header="{ext:Locale MenuBar_OpenPak_Friends}"
+                    Icon="{ext:Icon fa-solid fa-user-group}" />
+                <MenuItem
+                    Name="OpenPakInvitationsMenuItem"
+                    Header="{ext:Locale MenuBar_OpenPak_Invitations}"
+                    Icon="{ext:Icon fa-solid fa-envelope}" />
+                <MenuItem
+                    Name="OpenPakSavesMenuItem"
+                    Header="{ext:Locale MenuBar_OpenPak_CloudSaves}"
+                    Icon="{ext:Icon fa-solid fa-cloud-arrow-up}" />
+                <MenuItem
+                    Name="OpenPakModsMenuItem"
+                    Header="{ext:Locale MenuBar_OpenPak_Mods}"
+                    Icon="{ext:Icon fa-solid fa-puzzle-piece}" />
+                <MenuItem
+                    Name="OpenPakNewsMenuItem"
+                    Header="{ext:Locale MenuBar_OpenPak_News}"
+                    Icon="{ext:Icon fa-solid fa-newspaper}" />
+                <MenuItem
+                    Name="OpenPakStatusMenuItem"
+                    Header="{ext:Locale MenuBar_OpenPak_Status}"
+                    Icon="{ext:Icon fa-solid fa-signal}" />
+                <Separator />
+                <MenuItem
+                    Name="OpenPakSettingsMenuItem"
+                    Header="{ext:Locale MenuBar_OpenPak_Settings}"
+                    Icon="{ext:Icon fa-solid fa-gear}" />
                 <MenuItem
                     Name="OpenPakWebsiteMenuItem"
                     Header="{ext:Locale MenuBar_OpenPak_Website}"
                     Icon="{ext:Icon fa-solid fa-globe}" />
+                <MenuItem
+                    Name="OpenPakSignOutMenuItem"
+                    Header="{ext:Locale MenuBar_OpenPak_SignOut}"
+                    Icon="{ext:Icon fa-solid fa-arrow-right-from-bracket}" />
             </MenuItem>
             <MenuItem VerticalAlignment="Center" Header="{ext:Locale MenuBarHelp}">
                 <MenuItem

@@ -45,6 +45,7 @@
             <settings:SettingsAudioView Name="AudioPage" />
             <settings:SettingsHotkeysView Name="HotkeysPage" />
             <settings:SettingsNetworkView Name="NetworkPage" />
+            <settings:SettingsOpenPakView Name="OpenPakPage" />
             <settings:SettingsLoggingView Name="LoggingPage" />
             <settings:SettingsDebugView Name="DebugPage" />
             <settings:SettingsHacksView Name="HacksPage" />
@@ -102,6 +103,10 @@
                     Content="{ext:Locale SettingsTabNetwork}"
                     Tag="NetworkPage"
                     IconSource="Globe" />
+                <ui:FANavigationViewItem
+                    Content="{ext:Locale Dialog_OpenPak_SettingsTab}"
+                    Tag="OpenPakPage"
+                    IconSource="Contact" />
                 <ui:FANavigationViewItem
                     Content="{ext:Locale SettingsTabLogging}"
                     Tag="LoggingPage"

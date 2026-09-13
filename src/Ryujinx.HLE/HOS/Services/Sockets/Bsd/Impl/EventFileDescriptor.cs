@@ -1,3 +1,4 @@
+using Ryujinx.Common.Logging;
 using Ryujinx.HLE.HOS.Services.Sockets.Bsd.Types;
 using System;
 using System.Runtime.InteropServices;
@@ -7,6 +8,11 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
 {
     class EventFileDescriptor : IFileDescriptor
     {
+        // Raised after any successful write to any event fd. The Bsd server subscribes: a write
+        // is the wakeup itself, and the deferred poll that waits on this fd must be re-checked
+        // promptly rather than at the mercy of the next unrelated IPC.
+        public static event Action OnAnyWrite;
+
         private ulong _value;
         private readonly EventFdFlags _flags;
 
@@ -89,6 +95,9 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
                         readSize = 0;
 
                         UpdateEventStates();
+
+                        Logger.Debug?.Print(LogClass.ServiceBsd, $"[EventFd] Read while empty (EAGAIN)");
+
                         return LinuxError.EAGAIN;
                     }
                 }
@@ -109,6 +118,9 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
                 }
 
                 UpdateEventStates();
+
+                Logger.Debug?.Print(LogClass.ServiceBsd, $"[EventFd] Read: {count}");
+
                 return LinuxError.SUCCESS;
             }
         }
@@ -118,6 +130,8 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
             if (!MemoryMarshal.TryRead(buffer, out ulong count) || count == ulong.MaxValue)
             {
                 writeSize = 0;
+
+                Logger.Debug?.Print(LogClass.ServiceBsd, $"[EventFd] Write rejected: buffer does not carry a count");
 
                 return LinuxError.EINVAL;
             }
@@ -137,6 +151,9 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
                         writeSize = 0;
 
                         UpdateEventStates();
+
+                        Logger.Debug?.Print(LogClass.ServiceBsd, $"[EventFd] Write overflow while non-blocking (EAGAIN)");
+
                         return LinuxError.EAGAIN;
                     }
                 }
@@ -147,6 +164,13 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
                 Monitor.Pulse(_lock);
 
                 UpdateEventStates();
+
+                // A write is the wakeup itself: whoever signs a poller's death or its next step
+                // does it here, so it is worth one line in the log.
+                Logger.Debug?.Print(LogClass.ServiceBsd, $"[EventFd] Write: count {count}, value now {_value}");
+
+                OnAnyWrite?.Invoke();
+
                 return LinuxError.SUCCESS;
             }
         }

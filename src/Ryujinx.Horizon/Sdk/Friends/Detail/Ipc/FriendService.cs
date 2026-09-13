@@ -5,7 +5,9 @@ using Ryujinx.Horizon.Sdk.OsTypes;
 using Ryujinx.Horizon.Sdk.Settings;
 using Ryujinx.Horizon.Sdk.Sf;
 using Ryujinx.Horizon.Sdk.Sf.Hipc;
+using Ryujinx.OpenPak;
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -52,11 +54,26 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         {
             count = 0;
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, offset, filter, pidPlaceholder, pid });
-
             if (userId.IsNull)
             {
                 return FriendResult.InvalidArgument;
+            }
+
+            if (!OpenPakFriends.Available)
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, offset, filter, pidPlaceholder, pid });
+
+                return Result.Success;
+            }
+
+            foreach (OpenPakFriend friend in OpenPakFriends.Filtered(filter, offset))
+            {
+                if (count == friendIds.Length)
+                {
+                    break;
+                }
+
+                friendIds[count++] = OpenPakFriends.ToFriendImpl(friend, userId).NetworkUserId;
             }
 
             return Result.Success;
@@ -74,12 +91,29 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         {
             count = 0;
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, offset, filter, pidPlaceholder, pid });
-
             if (userId.IsNull)
             {
                 return FriendResult.InvalidArgument;
             }
+
+            if (!OpenPakFriends.Available)
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, offset, filter, pidPlaceholder, pid });
+
+                return Result.Success;
+            }
+
+            foreach (OpenPakFriend friend in OpenPakFriends.Filtered(filter, offset))
+            {
+                if (count == friendList.Length)
+                {
+                    break;
+                }
+
+                friendList[count++] = OpenPakFriends.ToFriendImpl(friend, userId);
+            }
+
+            Logger.Info?.Print(LogClass.ServiceFriend, $"[OpenPak] Served {count} friends to the guest");
 
             return Result.Success;
         }
@@ -92,9 +126,34 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             ulong pidPlaceholder,
             [ClientProcessId] ulong pid)
         {
-            string friendIdList = string.Join(", ", friendIds.ToArray());
+            if (!OpenPakFriends.Available)
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend,
+                    new { userId, friendIdList = string.Join(", ", friendIds.ToArray()), pidPlaceholder, pid });
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendIdList, pidPlaceholder, pid });
+                return Result.Success;
+            }
+
+            // The guest asks about specific ids and expects them back in the order it asked, so
+            // this answers per slot rather than filling the buffer with whoever matched.
+            List<OpenPakFriend> friends = OpenPakFriends.Filtered(default, 0);
+
+            for (int index = 0; index < friendIds.Length && index < info.Length; index++)
+            {
+                info[index] = default;
+
+                foreach (OpenPakFriend friend in friends)
+                {
+                    FriendImpl candidate = OpenPakFriends.ToFriendImpl(friend, userId);
+
+                    if (candidate.NetworkUserId == friendIds[index])
+                    {
+                        info[index] = candidate;
+
+                        break;
+                    }
+                }
+            }
 
             return Result.Success;
         }
@@ -339,9 +398,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(20100)]
         public Result GetFriendCount(out int count, Uid userId, SizedFriendFilter filter, ulong pidPlaceholder, [ClientProcessId] ulong pid)
         {
-            count = 0;
-
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, filter, pidPlaceholder, pid });
+            count = OpenPakFriends.Available ? OpenPakFriends.Filtered(filter, 0).Count : 0;
 
             return Result.Success;
         }
@@ -404,8 +461,24 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             count = 0;
             count2 = 0;
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            if (!OpenPakFriends.Available)
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
 
+                return Result.Success;
+            }
+
+            foreach (OpenPakRequest request in OpenPakAccount.Instance.Requests)
+            {
+                if (request.Incoming)
+                {
+                    count++;
+                }
+            }
+
+            // The second count is the newly-arrived subset. Nothing here tracks what the console
+            // has already been shown, and reporting every request as new would put a badge on the
+            // profile that never clears, so this stays at zero until that state is kept.
             return Result.Success;
         }
 
@@ -419,6 +492,10 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         {
             count = 0;
 
+            // FriendRequestImpl's layout is not established — the struct is empty upstream — so
+            // there is no shape to write a request into. Filling the buffer with zeros would be a
+            // guess the console reads as data. Requests are accepted from the OpenPak window
+            // instead, and GetReceivedFriendRequestCount above still reports them truthfully.
             Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, arg3, arg4 });
 
             return Result.Success;

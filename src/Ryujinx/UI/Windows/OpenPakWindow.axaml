@@ -1,0 +1,107 @@
+<window:StyleableAppWindow
+    x:Class="Ryujinx.Ava.UI.Windows.OpenPakWindow"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:ui="clr-namespace:FluentAvalonia.UI.Controls;assembly=FluentAvalonia"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ext="clr-namespace:Ryujinx.Ava.Common.Markup"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:window="clr-namespace:Ryujinx.Ava.UI.Windows"
+    xmlns:viewModels="clr-namespace:Ryujinx.Ava.UI.ViewModels"
+    xmlns:openPak="clr-namespace:Ryujinx.Ava.UI.Views.OpenPak"
+    xmlns:helper="clr-namespace:Ryujinx.Common.Helper;assembly=Ryujinx.Common"
+    Width="1000"
+    Height="700"
+    MinWidth="820"
+    MinHeight="520"
+    WindowStartupLocation="CenterOwner"
+    x:DataType="viewModels:OpenPakViewModel"
+    mc:Ignorable="d"
+    Focusable="True">
+    <Design.DataContext>
+        <viewModels:OpenPakViewModel />
+    </Design.DataContext>
+    <Grid RowDefinitions="*,Auto">
+        <Grid Name="Pages" IsVisible="False">
+            <openPak:OpenPakAccountView Name="AccountPage" />
+            <openPak:OpenPakFriendsView Name="FriendsPage" />
+            <openPak:OpenPakInvitationsView Name="InvitationsPage" />
+            <openPak:OpenPakSavesView Name="SavesPage" />
+            <openPak:OpenPakModsView Name="ModsPage" />
+            <openPak:OpenPakNewsView Name="NewsPage" />
+            <openPak:OpenPakStatusView Name="StatusPage" />
+        </Grid>
+        <ui:FANavigationView
+            Grid.Row="0"
+            Name="NavPanel"
+            IsSettingsVisible="False"
+            IsBackEnabled="False"
+            Margin="10,0,10,0"
+            OpenPaneLength="200">
+            <ui:FANavigationView.MenuItems>
+                <ui:FANavigationViewItem
+                    IsSelected="True"
+                    Content="{ext:Locale Dialog_OpenPak_PageAccount}"
+                    Tag="AccountPage"
+                    IconSource="Contact" />
+                <ui:FANavigationViewItem
+                    Content="{ext:Locale Dialog_OpenPak_PageFriends}"
+                    Tag="FriendsPage"
+                    IconSource="People" />
+                <ui:FANavigationViewItem
+                    Content="{ext:Locale Dialog_OpenPak_PageInvitations}"
+                    Tag="InvitationsPage"
+                    IconSource="Mail" />
+                <ui:FANavigationViewItem
+                    Content="{ext:Locale Dialog_OpenPak_PageSaves}"
+                    Tag="SavesPage"
+                    IconSource="Save" />
+                <ui:FANavigationViewItem
+                    Content="{ext:Locale Dialog_OpenPak_PageMods}"
+                    Tag="ModsPage"
+                    IconSource="Library" />
+                <ui:FANavigationViewItem
+                    Content="{ext:Locale Dialog_OpenPak_PageNews}"
+                    Tag="NewsPage"
+                    IconSource="Document" />
+                <ui:FANavigationViewItem
+                    Content="{ext:Locale Dialog_OpenPak_PageStatus}"
+                    Tag="StatusPage"
+                    IconSource="Globe" />
+            </ui:FANavigationView.MenuItems>
+            <ui:FANavigationView.Styles>
+                <Style Selector="Grid#PlaceholderGrid">
+                    <Setter Property="Height" Value="40" />
+                </Style>
+                <Style Selector="ui|FANavigationViewItem ui|FASymbolIcon">
+                    <Setter Property="FlowDirection" Value="LeftToRight" />
+                </Style>
+            </ui:FANavigationView.Styles>
+        </ui:FANavigationView>
+
+        <!-- One status line for the whole window: every page's failures read the same, and a
+             message from the friends page is still worth seeing after switching to saves. -->
+        <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto" Margin="16,8">
+            <ProgressBar
+                Grid.Column="0"
+                Width="90"
+                Height="4"
+                Margin="0,0,12,0"
+                VerticalAlignment="Center"
+                IsIndeterminate="True"
+                IsVisible="{Binding Busy}" />
+            <TextBlock
+                Grid.Column="1"
+                Text="{Binding Message}"
+                IsVisible="{Binding HasMessage}"
+                TextWrapping="Wrap"
+                VerticalAlignment="Center" />
+            <Button
+                Grid.Column="2"
+                Name="CloseButton"
+                Content="{ext:Locale InputDialogOk}"
+                MinWidth="80"
+                HorizontalAlignment="Right" />
+        </Grid>
+    </Grid>
+</window:StyleableAppWindow>

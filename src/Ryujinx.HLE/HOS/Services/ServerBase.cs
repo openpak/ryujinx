@@ -25,6 +25,24 @@ namespace Ryujinx.HLE.HOS.Services
         // not large enough.
         private const int PointerBufferSize = 0x8000;
 
+        // Deferred Bsd Poll support. A poll that would block parks itself and the request lands
+        // here; every pass of the server loop re-runs parked polls non-blocking and replies to the
+        // ones that are ready or overdue. The single Bsd thread never sits inside a wait that only
+        // the next eventfd write could end.
+        private sealed class DeferredPoll
+        {
+            public int SessionHandle;
+            public IpcMessage Request;
+            public ulong RecvListAddr;
+            public long DeadlineMs;
+            public byte[] InputSnapshot;
+        }
+
+        private readonly List<DeferredPoll> _deferredPolls = [];
+        private readonly object _deferredPollsLock = new();
+        private ulong _heapAddr;
+        private ulong _tlsAddress;
+
         private static uint[] DefaultCapabilities => [
             (((uint)KScheduler.CpuCoresCount - 1) << 24) + (((uint)KScheduler.CpuCoresCount - 1) << 16) + 0x63F7u,
             0x1FFFFFCF,
@@ -72,6 +90,14 @@ namespace Ryujinx.HLE.HOS.Services
             InitDone = new ManualResetEvent(false);
             Name = name;
             SmObjectFactory = smObjectFactory;
+
+            // Only the Bsd server defers polls, so only it needs to know that an event fd was
+            // written: that write is the wakeup of a parked poll, and the loop must re-check it
+            // now instead of after whichever unrelated IPC happens to come next.
+            if (name == "Bsd")
+            {
+                Sockets.Bsd.Impl.EventFileDescriptor.OnAnyWrite += SignalWake;
+            }
 
             const ProcessCreationFlags Flags =
                 ProcessCreationFlags.EnableAslr |
@@ -206,6 +232,11 @@ namespace Ryujinx.HLE.HOS.Services
             ulong messagePtr = _selfThread.TlsAddress;
             _context.Syscall.SetHeapSize(out ulong heapAddr, 0x200000);
 
+            // Kept for the deferred-poll reply path, which must re-arm the session's receive-list
+            // descriptor from outside the normal reply flow.
+            _heapAddr = heapAddr;
+            _tlsAddress = messagePtr;
+
             _selfProcess.CpuMemory.Write(messagePtr + 0x0, 0);
             _selfProcess.CpuMemory.Write(messagePtr + 0x4, 2 << 10);
             _selfProcess.CpuMemory.Write(messagePtr + 0x8, heapAddr | ((ulong)PointerBufferSize << 48));
@@ -213,6 +244,10 @@ namespace Ryujinx.HLE.HOS.Services
 
             while (true)
             {
+                // Re-check parked polls first: one whose socket or event fd is now ready replies
+                // here, and one whose deadline has passed answers with a timeout.
+                CompleteReadyDeferredPolls(ref replyTargetHandle);
+
                 int portHandleCount;
                 int handleCount;
                 int[] handles;
@@ -310,6 +345,117 @@ namespace Ryujinx.HLE.HOS.Services
             Dispose();
         }
 
+        /// <summary>
+        /// Answer parked polls whose socket is ready or whose deadline has passed.
+        ///
+        /// Each parked poll is re-run non-blocking against the snapshot of its pollfd array taken
+        /// when it was parked — never against guest memory, where that array has long since been
+        /// overwritten by other IPC. When a poll completes, the fresh response must carry the
+        /// original request's pointer-buffer descriptors again: a response built from scratch has
+        /// none, the kernel would copy nothing, and the game would see a poll that says "ready"
+        /// with zeroed events — which is the poll storm that wedges gRPC for good.
+        /// </summary>
+        private void CompleteReadyDeferredPolls(ref int replyTargetHandle)
+        {
+            lock (_deferredPollsLock)
+            {
+                if (_deferredPolls.Count == 0)
+                {
+                    return;
+                }
+            }
+
+            // Re-checks also write into the shared IPC pointer buffer. Deliver
+            // the previous reply before reusing its output memory.
+            if (replyTargetHandle != 0)
+            {
+                _context.Syscall.ReplyAndReceive(out _, ReadOnlySpan<int>.Empty, replyTargetHandle, 0);
+                _selfThread.HandlePostSyscall();
+                replyTargetHandle = 0;
+            }
+
+            lock (_deferredPollsLock)
+            {
+                for (int i = _deferredPolls.Count - 1; i >= 0; i--)
+                {
+                    DeferredPoll deferred = _deferredPolls[i];
+
+                    IpcMessage response = new() { Type = IpcMessageType.CmifResponse };
+
+                    _requestDataStream.SetLength(0);
+                    _requestDataStream.Write(deferred.Request.RawData);
+                    _requestDataStream.Position = 0;
+                    _responseDataStream.SetLength(0);
+
+                    ServiceCtx context = new(
+                        _context.Device,
+                        _selfProcess,
+                        _selfProcess.CpuMemory,
+                        _selfThread,
+                        deferred.Request,
+                        response,
+                        _requestDataReader,
+                        _responseDataWriter)
+                    {
+                        PollForceNonBlocking = true,
+                        PollInputSnapshot = deferred.InputSnapshot,
+                    };
+
+                    GetSessionObj(deferred.SessionHandle).CallCmifMethod(context);
+
+                    bool deadlineElapsed = PerformanceCounter.ElapsedMilliseconds >= deferred.DeadlineMs;
+
+                    if (context.PollResult > 0 || deadlineElapsed)
+                    {
+                        response.RawData = _responseDataStream.ToArray();
+
+                        for (int b = 0; b < deferred.Request.RecvListBuff.Count; b++)
+                        {
+                            IpcRecvListBuffDesc buf = deferred.Request.RecvListBuff[b];
+
+                            if (buf.Position != 0 && buf.Size != 0)
+                            {
+                                response.PtrBuff.Add(new IpcPtrBuffDesc(buf.Position, (uint)b, buf.Size));
+                            }
+                        }
+
+                        // Deliver each poll before another re-check overwrites
+                        // the shared output buffer used by this response.
+                        RecyclableMemoryStream responseStream = response.GetStream(
+                            (long)_tlsAddress,
+                            deferred.RecvListAddr | ((ulong)PointerBufferSize << 48));
+
+                        _selfProcess.CpuMemory.Write(_tlsAddress, responseStream.GetReadOnlySequence());
+                        MemoryStreamManager.Shared.ReleaseStream(responseStream);
+                        _context.Syscall.ReplyAndReceive(out _, ReadOnlySpan<int>.Empty, deferred.SessionHandle, 0);
+                        _selfThread.HandlePostSyscall();
+
+                        _deferredPolls.RemoveAt(i);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Write a neutral CMIF message header into the thread's TLS. Deferring skips the normal
+        /// reply, and that reply is what re-publishes the session's receive-list descriptor; this
+        /// re-arms it explicitly so the next request carrying pointer buffers does not fail its
+        /// kernel copy.
+        /// </summary>
+        private void RearmReceiveList()
+        {
+            ulong messagePtr = _tlsAddress;
+
+            _selfProcess.CpuMemory.Write(messagePtr + 0x0, 0);
+            _selfProcess.CpuMemory.Write(messagePtr + 0x4, 2 << 10);
+            _selfProcess.CpuMemory.Write(messagePtr + 0x8, _heapAddr | ((ulong)PointerBufferSize << 48));
+        }
+
+        private void SignalWake()
+        {
+            _wakeEvent?.WritableEvent.Signal();
+        }
+
         private void DestroySession(int serverSessionHandle)
         {
             _context.Syscall.CloseHandle(serverSessionHandle);
@@ -377,6 +523,30 @@ namespace Ryujinx.HLE.HOS.Services
                     _responseDataWriter);
 
                 GetSessionObj(serverSessionHandle).CallCmifMethod(context);
+
+                // The Bsd poll handler parks a poll that would block: the request is registered by
+                // the loop and answered when it is ready. Skipping the reply here is not optional
+                // bookkeeping — the skipped response write is what leaves the session's receive-
+                // list descriptor armed for the next request, and the freed thread is what lets
+                // the eventfd write that will end the wait be processed at all.
+                if (context.PollDeferRequested)
+                {
+                    lock (_deferredPollsLock)
+                    {
+                        _deferredPolls.Add(new DeferredPoll
+                        {
+                            SessionHandle = serverSessionHandle,
+                            Request = request,
+                            RecvListAddr = recvListAddr,
+                            DeadlineMs = context.PollDeadlineMs,
+                            InputSnapshot = context.PollInputSnapshot,
+                        });
+                    }
+
+                    RearmReceiveList();
+
+                    return false;
+                }
 
                 response.RawData = _responseDataStream.ToArray();
             }

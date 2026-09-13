@@ -12,6 +12,7 @@ using LibHac.Tools.Fs;
 using LibHac.Tools.FsSystem;
 using LibHac.Tools.FsSystem.NcaUtils;
 using Ryujinx.Ava.Common.Locale;
+using Ryujinx.Ava.Systems.AppLibrary;
 using Ryujinx.Ava.Systems.Configuration;
 using Ryujinx.Ava.UI.Helpers;
 using Ryujinx.Ava.UI.Windows;
@@ -108,6 +109,36 @@ namespace Ryujinx.Ava.Common
             }
 
             OpenSaveDir(saveDataId);
+        }
+
+        /// <summary>
+        /// The committed save directory of a title for the user who is signed in, creating the
+        /// savedata if the console has never had one. This is the directory OpenPak's cloud saves
+        /// upload from and download into: the `0` slot, which is what the guest reads.
+        /// </summary>
+        public static bool TryGetUserSaveDirectory(ApplicationData application, out string path)
+        {
+            path = null;
+
+            if (_horizonClient == null)
+            {
+                return false;
+            }
+
+            SaveDataFilter filter = SaveDataFilter.Make(application.Id, SaveDataType.Account,
+                _accountManager.LastOpenedUser.UserId.ToLibHac(),
+                saveDataId: default, index: default);
+
+            if (!TryFindSaveData(application.Name, application.Id, application.ControlHolder, in filter, out ulong saveDataId))
+            {
+                return false;
+            }
+
+            path = Path.Combine(VirtualFileSystem.GetNandPath(), $"user/save/{saveDataId:x16}", "0");
+
+            Directory.CreateDirectory(path);
+
+            return true;
         }
 
         public static void OpenSaveDir(ulong saveDataId)

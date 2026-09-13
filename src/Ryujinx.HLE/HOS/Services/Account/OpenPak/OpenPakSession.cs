@@ -1,8 +1,11 @@
 using Ryujinx.Common.Configuration;
 using Ryujinx.Common.Logging;
+using Ryujinx.Common;
+using Ryujinx.OpenPak;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -37,6 +40,11 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         public static OpenPakSession Instance { get; } = new();
 
         private const string DauthHost = "dauth-lp1.ndas.srv.nintendo.net";
+
+        // Where an invitation sent by a console lands. The website's /api/v1/me/invitations is the
+        // core's own store and never sees one of these, so this is the only place to look.
+        private const string FiveHost = "app.lp1.five.nintendo.net";
+
         private const string BaasHost = "e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com";
 
         // Echoed back by the server, which knows the console from its client certificate rather
@@ -53,6 +61,14 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 
         private readonly SemaphoreSlim _gate = new(1, 1);
 
+        // Senders arrive as BAAS ids; the friend list is keyed by pid, so the name comes from the
+        // same lookup the console uses, once per person.
+        private readonly Dictionary<string, string> _senderNames = new();
+
+        // Dismissed here as well as read on the server: read state is shared with every device on
+        // the account, and hiding a row is this machine's business.
+        private readonly HashSet<string> _dismissed = [];
+
         private HttpClient _http;
         private DeviceAccount _device;
 
@@ -65,6 +81,10 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         private string _avatarUrl;
         private byte[] _avatar;
         private Task _heartbeat;
+        private IReadOnlyList<OpenPakInvitation> _invitations = [];
+
+        /// <summary>The BAAS token presence speaks with: the login's own, user-scoped.</summary>
+        private string _applicationToken;
 
         /// <summary>An OpenPak server is configured and reachable enough to have been set up.</summary>
         public bool Enabled => Server != null;
@@ -89,6 +109,12 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         /// device account gets a perfectly valid token that no title server can attach to a person.
         /// </summary>
         public bool IsLinked => _nickname != null;
+
+        /// <summary>What the native inbox held at the last poll, dismissals removed. Never null.</summary>
+        public IReadOnlyList<OpenPakInvitation> Invitations => _invitations;
+
+        /// <summary>Raised once for each invitation that was not there at the previous poll.</summary>
+        public event Action<OpenPakInvitation> InvitationArrived;
 
         private static OpenPakServer Server => OpenPakServer.Current;
 
@@ -176,6 +202,9 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 
             string applicationToken = application.RootElement.GetProperty("accessToken").GetString();
 
+            // Presence and the other BAAS API calls after login speak with this token.
+            _applicationToken = applicationToken;
+
             _device ??= DeviceAccount.Load(Server.Key) ?? await CreateDeviceAccountAsync(applicationToken, cancellationToken);
 
             bool linking = accountIdToken != null;
@@ -190,6 +219,17 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             _idToken = login.RootElement.GetProperty("idToken").GetString();
             _idTokenExpiry = DateTime.UtcNow + TimeSpan.FromSeconds(login.RootElement.GetProperty("expiresIn").GetInt32());
             _userId = login.RootElement.GetProperty("user").GetProperty("id").GetString();
+
+            // Presence is user-scoped: the token it speaks with must carry the BAAS user as its
+            // subject, which is the login's own accessToken and not the device-scoped one the
+            // token exchange minted earlier — two tokens, same issuer, same typ, different
+            // subject, and the user-scoped route refuses the device-shaped one with an opaque
+            // 401.
+            if (login.RootElement.TryGetProperty("accessToken", out JsonElement loginToken))
+            {
+                _applicationToken = loginToken.GetString();
+            }
+
             _networkServiceAccountId = ParseUserId(_userId);
             _nickname = NicknameOf(login.RootElement);
             _friendCode = FriendCodeOf(login.RootElement);
@@ -365,7 +405,7 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 
             while (true)
             {
-                using JsonDocument state = await GetAsync(
+                using JsonDocument state = await GetClaimStateAsync(
                     $"https://{NaHost}/connect/1.0.0/qr/state?c={code}", cancellationToken);
 
                 switch (state.RootElement.GetProperty("state").GetString())
@@ -422,7 +462,7 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             }
         }
 
-        private async Task<JsonDocument> GetAsync(string url, CancellationToken cancellationToken)
+        private async Task<JsonDocument> GetClaimStateAsync(string url, CancellationToken cancellationToken)
         {
             using HttpResponseMessage response = await _http.GetAsync(url, cancellationToken);
             string body = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -453,11 +493,18 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 
             _heartbeat = Task.Run(async () =>
             {
-                while (true)
+                for (int tick = 0; ; tick++)
                 {
                     // Three times inside the lease the server hands out, so one lost request is
                     // not a person blinking offline.
                     await Task.Delay(TimeSpan.FromSeconds(10));
+
+                    // The inbox is store-and-forward and changes rarely; every third beat is
+                    // often enough to hear about an invitation while the person still cares.
+                    if (tick % 3 == 0)
+                    {
+                        await RefreshInvitationsAsync(CancellationToken.None);
+                    }
 
                     try
                     {
@@ -497,15 +544,33 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             }
         }
 
-        /// <summary>The presence request a console's friends sysmodule makes, on the same path.</summary>
+        /// <summary>
+        /// The presence request a console's friends sysmodule makes, on the same path.
+        ///
+        /// While a title runs the presence says what is being played, not merely that the
+        /// console is on: the friends module reads the four app fields to draw "playing X", and
+        /// acdIndex goes over the wire as a JSON number because the console sends it unquoted.
+        /// </summary>
         private async Task PresenceAsync(string state, CancellationToken cancellationToken)
         {
+            string titleId = TitleIDs.CurrentApplication.Value.OrDefault();
+
+            string body = state == "OFFLINE" || titleId == null
+                ? $$"""[{"op":"replace","path":"/presence/state","value":"{{state}}"}]"""
+                : $$"""[{"op":"replace","path":"/presence/state","value":"PLAYING"},{"op":"replace","path":"/presence/extras/friends/appInfo:appId","value":"{{titleId}}"},{"op":"replace","path":"/presence/extras/friends/appInfo:presenceGroupId","value":"{{titleId}}"},{"op":"replace","path":"/presence/extras/friends/appInfo:acdIndex","value":0}]""";
+
             using HttpRequestMessage request = new(HttpMethod.Patch,
                 $"https://{BaasHost}/1.0.0/users/{_userId}/device_accounts/{_device.Id}")
             {
-                Content = new StringContent($$"""[{"op":"replace","path":"/presence/state","value":"{{state}}"}]""",
-                    Encoding.UTF8, "application/json"),
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
             };
+
+            // Unauthenticated presence is a 401 by design: the server has no idea whose device
+            // is claiming to be online.
+            if (_applicationToken != null)
+            {
+                request.Headers.Add("Authorization", "Bearer " + _applicationToken);
+            }
 
             using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken);
 
@@ -514,6 +579,191 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                 Logger.Debug?.Print(LogClass.ServiceAcc,
                     $"[OpenPak] Presence {state} returned {(int)response.StatusCode}");
             }
+        }
+
+        /// <summary>
+        /// What is waiting in the native invitation inbox, on the route a console's friends module
+        /// asks for it.
+        ///
+        /// Polling is the whole delivery path here. A console is pushed its invitations over NPNS;
+        /// this emulator holds no such connection, so the server queues the push, finds nobody, and
+        /// drops it ten minutes later — while the invitation itself sits in the inbox for a day.
+        /// Asking is therefore the difference between seeing one and never knowing it existed.
+        ///
+        /// Read state is not a filter: the same account signed in on a console marks these read
+        /// from over there, and that is no reason for this machine to have missed it.
+        /// </summary>
+        public async Task RefreshInvitationsAsync(CancellationToken cancellationToken)
+        {
+            if (!Enabled || _userId == null || _applicationToken == null)
+            {
+                return;
+            }
+
+            List<OpenPakInvitation> waiting = [];
+            List<OpenPakInvitation> arrived = [];
+
+            try
+            {
+                using JsonDocument inbox = await GetAsync(
+                    $"https://{FiveHost}/v2/users/{_userId}/invitations/inbox?invitation_types=friend",
+                    cancellationToken);
+
+                if (!inbox.RootElement.TryGetProperty("items", out JsonElement items))
+                {
+                    return;
+                }
+
+                foreach (JsonElement item in items.EnumerateArray())
+                {
+                    string sender = item.GetProperty("sender_id").GetString();
+
+                    OpenPakInvitation invitation = InvitationOf(item,
+                        await SenderNameAsync(sender, cancellationToken) ?? sender);
+
+                    if (_dismissed.Contains(invitation.InvitationId))
+                    {
+                        continue;
+                    }
+
+                    waiting.Add(invitation);
+
+                    if (!_invitations.Any(known => known.InvitationId == invitation.InvitationId))
+                    {
+                        arrived.Add(invitation);
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                // An inbox that cannot be reached is the list staying as it was, not an error in
+                // front of somebody who is playing something.
+                Logger.Debug?.Print(LogClass.ServiceAcc, $"[OpenPak] Invitation inbox: {exception.Message}");
+
+                return;
+            }
+
+            _invitations = waiting;
+
+            foreach (OpenPakInvitation invitation in arrived)
+            {
+                InvitationArrived?.Invoke(invitation);
+            }
+        }
+
+        /// <summary>
+        /// One inbox item as the pages show it.
+        ///
+        /// Ids are JSON numbers on the wire, because the friends module parses them with %llu and a
+        /// string id would not survive that parser; everything above here wants the digits.
+        /// The wire carries no expiry at all, so the server's own day is what an invitation is
+        /// shown as having: it prunes on the same clock.
+        /// </summary>
+        public static OpenPakInvitation InvitationOf(JsonElement item, string senderName)
+            => new(
+                item.GetProperty("id").GetUInt64().ToString(),
+                senderName,
+                item.GetProperty("application_id").GetString(),
+                "switch",
+                DateTimeOffset.FromUnixTimeSeconds(
+                    item.TryGetProperty("created_at", out JsonElement created) ? created.GetInt64() : 0)
+                        .UtcDateTime + TimeSpan.FromHours(24));
+
+        /// <summary>
+        /// Take one off the list and tell the server it has been read, which is all the native
+        /// surface has: there is no decline for an invitation, only read state and expiry.
+        ///
+        /// ponytail: the dismissed set is in memory, so a restart shows a dismissed invitation
+        /// again until it expires. Persist it beside the device account if that ever grates.
+        /// </summary>
+        public async Task DismissInvitationAsync(string invitationId, CancellationToken cancellationToken)
+        {
+            _dismissed.Add(invitationId);
+            _invitations = _invitations.Where(invitation => invitation.InvitationId != invitationId).ToList();
+
+            if (!Enabled || _applicationToken == null)
+            {
+                return;
+            }
+
+            try
+            {
+                using HttpRequestMessage request = new(HttpMethod.Patch, $"https://{FiveHost}/v1/invitations")
+                {
+                    Content = new StringContent(
+                        $$"""[{"op":"replace","path":"/{{invitationId}}/extras/receiver/read","value":true}]""",
+                        Encoding.UTF8, "application/json"),
+                };
+
+                request.Headers.Add("Authorization", "Bearer " + _applicationToken);
+
+                using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.Debug?.Print(LogClass.ServiceAcc,
+                        $"[OpenPak] Marking invitation {invitationId} read returned {(int)response.StatusCode}");
+                }
+            }
+            catch (Exception exception)
+            {
+                Logger.Debug?.Print(LogClass.ServiceAcc, $"[OpenPak] Could not mark {invitationId} read: {exception.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Who a BAAS id belongs to, by the lookup the friends module uses, kept once found. A
+        /// name that cannot be looked up is null, and the id is shown instead of a blank.
+        /// </summary>
+        private async Task<string> SenderNameAsync(string senderId, CancellationToken cancellationToken)
+        {
+            if (senderId == null)
+            {
+                return null;
+            }
+
+            if (_senderNames.TryGetValue(senderId, out string cached))
+            {
+                return cached;
+            }
+
+            try
+            {
+                using JsonDocument found = await GetAsync(
+                    $"https://{BaasHost}/1.0.0/users?filter.id.$in={Uri.EscapeDataString(senderId)}", cancellationToken);
+
+                foreach (JsonElement user in found.RootElement.GetProperty("items").EnumerateArray())
+                {
+                    if (user.TryGetProperty("nickname", out JsonElement nickname) &&
+                        !string.IsNullOrEmpty(nickname.GetString()))
+                    {
+                        return _senderNames[senderId] = nickname.GetString();
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                Logger.Debug?.Print(LogClass.ServiceAcc, $"[OpenPak] Could not name {senderId}: {exception.Message}");
+            }
+
+            return null;
+        }
+
+        private async Task<JsonDocument> GetAsync(string url, CancellationToken cancellationToken)
+        {
+            using HttpRequestMessage request = new(HttpMethod.Get, url);
+
+            request.Headers.Add("Authorization", "Bearer " + _applicationToken);
+
+            using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken);
+            string body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException($"{request.RequestUri.AbsolutePath} returned {(int)response.StatusCode}: {body}");
+            }
+
+            return JsonDocument.Parse(body);
         }
 
         private async Task<JsonDocument> PostAsync(string url, HttpContent content, string bearer, CancellationToken cancellationToken)

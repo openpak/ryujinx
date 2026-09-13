@@ -150,6 +150,15 @@ namespace Ryujinx.HLE.HOS.Services.Nifm.StaticService
             return ResultCode.Success;
         }
 
+        [CommandCmif(20)]
+        // IsEthernetCommunicationEnabled() -> bool
+        public ResultCode IsEthernetCommunicationEnabled(ServiceCtx context)
+        {
+            context.ResponseData.Write(true);
+
+            return ResultCode.Success;
+        }
+
         [CommandCmif(21)]
         // IsAnyInternetRequestAccepted(buffer<nn::nifm::ClientId, 0x19, 4>) -> bool
         public ResultCode IsAnyInternetRequestAccepted(ServiceCtx context)
@@ -162,6 +171,61 @@ namespace Ryujinx.HLE.HOS.Services.Nifm.StaticService
             int clientId = context.Memory.Read<int>(position);
 
             context.ResponseData.Write(GeneralServiceManager.Get(clientId).IsAnyInternetRequestAccepted);
+
+            return ResultCode.Success;
+        }
+
+        [CommandCmif(22)]
+        // IsAnyForegroundRequestAccepted(buffer<nn::nifm::ClientId, 0x19, 4>) -> bool
+        public ResultCode IsAnyForegroundRequestAccepted(ServiceCtx context)
+        {
+            context.ResponseData.Write(true);
+
+            return ResultCode.Success;
+        }
+
+        [CommandCmif(26)]
+        // SetExclusiveClient(buffer<nn::nifm::ClientId, 0x19, 4>)
+        public ResultCode SetExclusiveClient(ServiceCtx context)
+        {
+            // One client owning the network is a console power-management idea; emulation has
+            // nothing to arbitrate, so the exclusive claim is accepted and forgotten.
+            Logger.Stub?.PrintStub(LogClass.ServiceNifm);
+
+            return ResultCode.Success;
+        }
+
+        [CommandCmif(28)]
+        // SetDefaultIpSetting(buffer<nn::nifm::IpV4AddressSetting, 0x19>)
+        public ResultCode SetDefaultIpSetting(ServiceCtx context)
+        {
+            Logger.Stub?.PrintStub(LogClass.ServiceNifm);
+
+            return ResultCode.Success;
+        }
+
+        [CommandCmif(29)]
+        // SetWirelessCommunicationEnabledForTest(bool)
+        public ResultCode SetWirelessCommunicationEnabledForTest(ServiceCtx context)
+        {
+            bool enabled = context.RequestData.ReadBoolean();
+
+            // Same test-only switch as ethernet: the setting is accepted and the answer it
+            // gates stays yes.
+            Logger.Stub?.PrintStub(LogClass.ServiceNifm, new { enabled });
+
+            return ResultCode.Success;
+        }
+
+        [CommandCmif(30)]
+        // SetEthernetCommunicationEnabledForTest(bool)
+        public ResultCode SetEthernetCommunicationEnabledForTest(ServiceCtx context)
+        {
+            bool enabled = context.RequestData.ReadBoolean();
+
+            // A test-only switch that titles poke before they trust the network is up. The
+            // answer it gates is always yes here, so accepting the write changes nothing.
+            Logger.Stub?.PrintStub(LogClass.ServiceNifm, new { enabled });
 
             return ResultCode.Success;
         }

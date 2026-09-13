@@ -1,0 +1,52 @@
+<UserControl
+    x:Class="Ryujinx.Ava.UI.Views.OpenPak.OpenPakNewsView"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:ext="clr-namespace:Ryujinx.Ava.Common.Markup"
+    xmlns:appLibrary="clr-namespace:Ryujinx.Ava.Systems.AppLibrary"
+    xmlns:viewModels="clr-namespace:Ryujinx.Ava.UI.ViewModels"
+    mc:Ignorable="d"
+    x:DataType="viewModels:OpenPakViewModel">
+    <Design.DataContext>
+        <viewModels:OpenPakViewModel />
+    </Design.DataContext>
+    <Grid Margin="20" RowDefinitions="Auto,Auto,Auto,*">
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" Margin="0,0,0,12">
+            <ComboBox
+                Name="TitleBox"
+                Width="320"
+                ItemsSource="{Binding Titles}"
+                SelectedItem="{Binding SelectedTitle}">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="appLibrary:ApplicationData">
+                        <TextBlock Text="{Binding Name}" />
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button Name="RefreshButton" Content="{ext:Locale Dialog_OpenPak_Refresh}" MinWidth="110" IsEnabled="{Binding Ready}" />
+            <Button Name="SaveButton" Content="{ext:Locale Dialog_OpenPak_NewsSave}" MinWidth="130" IsEnabled="{Binding Ready}" />
+        </StackPanel>
+
+        <TextBlock Grid.Row="1" Text="{Binding NewsValidFrom}" Opacity="0.8" Margin="4,0,0,12" />
+
+        <TextBlock
+            Grid.Row="2"
+            Text="{ext:Locale Dialog_OpenPak_NewsEmpty}"
+            IsVisible="{Binding NewsEmpty}"
+            Opacity="0.7"
+            Margin="4,0,0,12" />
+
+        <ListBox Grid.Row="3" ItemsSource="{Binding NewsFiles}" Background="Transparent">
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="viewModels:OpenPakNewsFileModel">
+                    <StackPanel Margin="0,4" Spacing="2">
+                        <TextBlock Text="{Binding Path}" FontFamily="{StaticResource JetBrainsMono}" />
+                        <TextBlock Text="{Binding Detail}" Opacity="0.6" FontSize="11" />
+                    </StackPanel>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </Grid>
+</UserControl>

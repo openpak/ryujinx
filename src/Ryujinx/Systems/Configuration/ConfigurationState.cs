@@ -9,6 +9,7 @@ using Ryujinx.HLE;
 using System;
 using System.Linq;
 using Key = Ryujinx.Common.Configuration.Hid.Key;
+using OpenPakConfig = Ryujinx.OpenPak.OpenPakConfig;
 using PhysicalKey = Ryujinx.Common.Configuration.Hid.PhysicalKey;
 
 namespace Ryujinx.Ava.Systems.Configuration
@@ -153,6 +154,10 @@ namespace Ryujinx.Ava.Systems.Configuration
                 MultiplayerDisableP2p = Multiplayer.DisableP2p,
                 MultiplayerLdnPassphrase = Multiplayer.LdnPassphrase,
                 LdnServer = Multiplayer.LdnServer,
+                OpenPakEnabled = OpenPak.Enabled,
+                OpenPakConsoleServer = OpenPak.ConsoleServer,
+                OpenPakWebsiteUrl = OpenPak.WebsiteUrl,
+                OpenPakRedirectGuestDns = OpenPak.RedirectGuestDns,
                 EnableGdbStub = Debug.EnableGdbStub,
                 GdbStubPort = Debug.GdbStubPort,
                 DebuggerSuspendOnStart = Debug.DebuggerSuspendOnStart,
@@ -228,6 +233,12 @@ namespace Ryujinx.Ava.Systems.Configuration
             Multiplayer.DisableP2p.Value = false;
             Multiplayer.LdnPassphrase.Value = string.Empty;
             Multiplayer.LdnServer.Value = string.Empty;
+            // Off by default, and pointed at production when it is turned on: a fresh install
+            // reaches nothing until somebody asks it to.
+            OpenPak.Enabled.Value = false;
+            OpenPak.ConsoleServer.Value = string.Empty;
+            OpenPak.WebsiteUrl.Value = OpenPakConfig.DefaultWebsiteUrl;
+            OpenPak.RedirectGuestDns.Value = true;
             UI.GuiColumns.FavColumn.Value = true;
             UI.GuiColumns.IconColumn.Value = true;
             UI.GuiColumns.AppColumn.Value = true;

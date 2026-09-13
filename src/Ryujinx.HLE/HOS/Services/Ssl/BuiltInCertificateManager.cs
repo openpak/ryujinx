@@ -17,6 +17,7 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
+using Ryujinx.OpenPak;
 
 namespace Ryujinx.HLE.HOS.Services.Ssl
 {
@@ -88,13 +89,17 @@ namespace Ryujinx.HLE.HOS.Services.Ssl
             return !string.IsNullOrEmpty(GetCertStoreTitleContentPath());
         }
 
-        private CertStoreEntry ReadCertStoreEntry(ReadOnlySpan<byte> buffer, CertStoreFileEntry entry)
+        private CertStoreEntry ReadCertStoreEntry(ReadOnlySpan<byte> buffer, CertStoreFileEntry entry, byte[] openPakCa)
         {
             string customCertificatePath = System.IO.Path.Join(AppDataManager.BaseDirPath, "system", "ssl", $"{entry.Id}.der");
 
             byte[] data;
 
-            if (File.Exists(customCertificatePath))
+            if (entry.Id == CaCertificateId.DSTRootCAX3 && openPakCa != null)
+            {
+                data = openPakCa;
+            }
+            else if (File.Exists(customCertificatePath))
             {
                 data = File.ReadAllBytes(customCertificatePath);
             }
@@ -169,9 +174,11 @@ namespace Ryujinx.HLE.HOS.Services.Ssl
                     ReadOnlySpan<byte> trustedCertsData = trustedCertsRaw[Unsafe.SizeOf<CertStoreFileHeader>()..];
                     ReadOnlySpan<CertStoreFileEntry> trustedCertsEntries = MemoryMarshal.Cast<byte, CertStoreFileEntry>(trustedCertsData)[..(int)header.EntriesCount];
 
+                    byte[] openPakCa = OpenPakCertificate.Load(OpenPakConfig.Enabled, OpenPakConfig.CaPath);
+
                     foreach (CertStoreFileEntry entry in trustedCertsEntries)
                     {
-                        _certificates.Add(entry.Id, ReadCertStoreEntry(trustedCertsData, entry));
+                        _certificates.Add(entry.Id, ReadCertStoreEntry(trustedCertsData, entry, openPakCa));
                     }
 
                     _initialized = true;

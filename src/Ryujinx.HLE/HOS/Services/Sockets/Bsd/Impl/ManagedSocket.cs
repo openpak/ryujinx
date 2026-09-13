@@ -2,6 +2,7 @@ using Ryujinx.Common.Logging;
 using Ryujinx.HLE.HOS.Services.Sockets.Bsd.Proxy;
 using Ryujinx.HLE.HOS.Services.Sockets.Bsd.Types;
 using System;
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
@@ -116,20 +117,50 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
         public LinuxError Bind(IPEndPoint localEndPoint)
         {
             Logger.Info?.PrintMsg(LogClass.ServiceBsd, $"Socket binding to: {ProtocolType}/{localEndPoint.Port}");
+
+            // A bind to port 0 pins nothing: the kernel picks the source port at connect or send
+            // time regardless. Titles bind explicitly before connecting on a socket whose family
+            // we may have answered differently than they asked (an IPv6 gRPC socket over an IPv4
+            // answer, for one), and failing that optional bind aborts the whole connection — so
+            // it is treated as the no-op it is.
+            if (localEndPoint.Port == 0)
+            {
+                return LinuxError.SUCCESS;
+            }
+
+            // Titles rebind the same fixed source port across retries (the NPLN resolver does it
+            // on every attempt). Without reuse the second bind fails while the first socket is
+            // still being torn down, and the retry dies of EADDRINUSE before it sends anything.
+            // Best effort in every direction: an option the platform refuses is logged and
+            // ignored, never allowed to reach the guest as a crash.
+            if (ProtocolType == ProtocolType.Udp)
+            {
+                try
+                {
+                    Socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, 1);
+                }
+                catch (Exception exception)
+                {
+                    Logger.Debug?.Print(LogClass.ServiceBsd, $"Could not set SO_REUSEADDR: {exception.Message}");
+                }
+            }
+
             try
             {
                 Socket.Bind(localEndPoint);
 
                 return LinuxError.SUCCESS;
             }
-            catch (SocketException exception)
+            catch (Exception exception)
             {
-                if (exception.SocketErrorCode != SocketError.WouldBlock)
+                if (exception is not SocketException socketException || socketException.SocketErrorCode != SocketError.WouldBlock)
                 {
-                    Logger.Warning?.Print(LogClass.ServiceBsd, $"Socket Exception: {exception}");
+                    Logger.Warning?.Print(LogClass.ServiceBsd, $"Bind failed: {exception.Message}");
                 }
 
-                return WinSockHelper.ConvertError((WsaError)exception.ErrorCode);
+                return exception is SocketException se
+                    ? WinSockHelper.ConvertError((WsaError)se.ErrorCode)
+                    : LinuxError.EINVAL;
             }
         }
 
@@ -313,13 +344,16 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
 
                 remoteEndPoint = (IPEndPoint)temp;
                 result = LinuxError.SUCCESS;
+
+                Logger.Debug?.Print(LogClass.ServiceBsd,
+                    $"ReceiveFrom: {receiveSize} bytes from {remoteEndPoint}");
             }
             catch (SocketException exception)
             {
-                if (exception.SocketErrorCode != SocketError.WouldBlock)
-                {
-                    Logger.Warning?.Print(LogClass.ServiceBsd, $"Socket Exception: {exception}");
-                }
+                // WouldBlock included: a probe reply that never arrives must not be silent, or a
+                // title waiting on its own NAT check looks like a server that never answered.
+                Logger.Debug?.Print(LogClass.ServiceBsd,
+                    $"ReceiveFrom failed: {exception.SocketErrorCode}");
 
                 receiveSize = -1;
 
@@ -340,14 +374,16 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
             {
                 sendSize = Socket.Send(buffer, ConvertBsdSocketFlags(flags));
 
+                Logger.Debug?.Print(LogClass.ServiceBsd, $"Send: {sendSize} bytes on connected socket");
+
                 return LinuxError.SUCCESS;
             }
             catch (SocketException exception)
             {
-                if (exception.SocketErrorCode != SocketError.WouldBlock)
-                {
-                    Logger.Warning?.Print(LogClass.ServiceBsd, $"Socket Exception: {exception}");
-                }
+                // WouldBlock included: a send that never happens must not be silent, or a title
+                // that stalls waiting on its own packet looks like a server that never answered.
+                Logger.Debug?.Print(LogClass.ServiceBsd,
+                    $"Send failed: {exception.SocketErrorCode} ({buffer.Length} bytes held back)");
 
                 sendSize = -1;
 
@@ -361,14 +397,17 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
             {
                 sendSize = Socket.SendTo(buffer[..size], ConvertBsdSocketFlags(flags), remoteEndPoint);
 
+                Logger.Debug?.Print(LogClass.ServiceBsd,
+                    $"SendTo: {sendSize} bytes to {remoteEndPoint}");
+
                 return LinuxError.SUCCESS;
             }
             catch (SocketException exception)
             {
-                if (exception.SocketErrorCode != SocketError.WouldBlock)
-                {
-                    Logger.Warning?.Print(LogClass.ServiceBsd, $"Socket Exception: {exception}");
-                }
+                // Same rule as Send: a datagram that never leaves, for any reason, is one line
+                // in the log rather than a title that connects to nothing.
+                Logger.Debug?.Print(LogClass.ServiceBsd,
+                    $"SendTo {remoteEndPoint} failed: {exception.SocketErrorCode} ({size} bytes held back)");
 
                 sendSize = -1;
 
@@ -402,6 +441,16 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
                 Socket.GetSocketOption(level, optionName, tempOptionValue);
 
                 tempOptionValue.AsSpan().CopyTo(optionValue);
+
+                // The connect-completion check reads SO_ERROR right after a poll says the socket
+                // is writable; what this returns decides whether the title writes its first byte
+                // or hangs up. Worth seeing in the log.
+                if (optionName == SocketOptionName.Error)
+                {
+                    int socketError = optionValue.Length >= 4 ? System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(optionValue) : -1;
+
+                    Logger.Info?.Print(LogClass.ServiceBsd, $"[Bsd] SO_ERROR read: {socketError}");
+                }
 
                 return LinuxError.SUCCESS;
             }

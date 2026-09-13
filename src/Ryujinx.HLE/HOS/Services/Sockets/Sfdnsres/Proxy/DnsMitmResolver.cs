@@ -1,4 +1,5 @@
 using Ryujinx.Common.Logging;
+using Ryujinx.HLE.HOS.Services.Account.OpenPak;
 using Ryujinx.HLE.HOS.Services.Sockets.Nsd;
 using System;
 using System.Collections.Generic;
@@ -17,12 +18,26 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Sfdnsres.Proxy
 
         private readonly Dictionary<string, IPAddress> _mitmHostEntries = new();
 
+        /// <summary>Names the hosts file marks direct: they always reach the real internet.</summary>
+        private readonly List<string> _mitmDirectNames = [];
+
         public void ReloadEntries(ServiceCtx context)
         {
             string sdPath = FileSystem.VirtualFileSystem.GetSdCardPath();
+
+            // Before the file is read, not after: the OpenPak redirect is expressed as entries in
+            // this very file, so it has to be in there by the time this parses it.
+            OpenPakHosts.Apply(sdPath);
+
             string filePath = FileSystem.VirtualFileSystem.GetFullPath(sdPath, HostsFilePath);
 
+            LoadEntriesFromFile(filePath);
+        }
+
+        internal void LoadEntriesFromFile(string filePath)
+        {
             _mitmHostEntries.Clear();
+            _mitmDirectNames.Clear();
 
             if (File.Exists(filePath))
             {
@@ -48,6 +63,21 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Sfdnsres.Proxy
 
                     // Hosts file example entry:
                     // 127.0.0.1  localhost loopback
+
+                    // OpenPak extension: a line beginning with "direct" marks names that must
+                    // never be redirected, however broadly the entries above them match. It is
+                    // how the network profile honours redirect.never through a hosts file.
+                    if (entry[0].Equals("direct", StringComparison.OrdinalIgnoreCase))
+                    {
+                        for (int i = 1; i < entry.Length; i++)
+                        {
+                            entry[i] = entry[i].Replace("%", IManager.NsdSettings.Environment);
+
+                            _mitmDirectNames.Add(entry[i]);
+                        }
+
+                        continue;
+                    }
 
                     // 0. Check the size of the array
                     if (entry.Length < 2)
@@ -82,6 +112,37 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Sfdnsres.Proxy
 
         public IPHostEntry ResolveAddress(string host)
         {
+            // Numeric endpoints already identify the destination. GetHostEntry would
+            // perform a reverse DNS lookup and fail when no PTR record exists.
+            if (IPAddress.TryParse(host, out IPAddress address))
+            {
+                return new IPHostEntry
+                {
+                    AddressList = [address],
+                    HostName = host,
+                    Aliases = [],
+                };
+            }
+
+            return TryResolveRedirect(host, out IPHostEntry entry) ? entry : Dns.GetHostEntry(host);
+        }
+
+        // A configured IP redirect may bypass the public Nintendo DNS block.
+        // A "direct" exception is not a redirect and must retain that block.
+        internal bool TryResolveRedirect(string host, out IPHostEntry entry)
+        {
+            entry = null;
+            foreach (string direct in _mitmDirectNames)
+            {
+                // Check for AMS hosts file extension: "*"
+                if (FileSystemName.MatchesSimpleExpression(direct, host))
+                {
+                    Logger.Info?.PrintMsg(LogClass.ServiceBsd, $"Not redirecting '{host}': the hosts file marks it direct");
+
+                    return false;
+                }
+            }
+
             foreach (KeyValuePair<string, IPAddress> hostEntry in _mitmHostEntries)
             {
                 // Check for AMS hosts file extension: "*"
@@ -90,17 +151,18 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Sfdnsres.Proxy
                 {
                     Logger.Info?.PrintMsg(LogClass.ServiceBsd, $"Redirecting '{host}' to: {hostEntry.Value}");
 
-                    return new IPHostEntry
+                    entry = new IPHostEntry
                     {
                         AddressList = [hostEntry.Value],
                         HostName = hostEntry.Key,
                         Aliases = [],
                     };
+
+                    return true;
                 }
             }
 
-            // No match has been found, resolve the host using regular dns
-            return Dns.GetHostEntry(host);
+            return false;
         }
     }
 }

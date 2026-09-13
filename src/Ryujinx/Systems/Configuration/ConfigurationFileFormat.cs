@@ -17,7 +17,7 @@ namespace Ryujinx.Ava.Systems.Configuration
         /// <summary>
         /// The current version of the file format
         /// </summary>
-        public const int CurrentVersion = 73;
+        public const int CurrentVersion = 74;
 
         /// <summary>
         /// Version of the configuration file format
@@ -475,6 +475,26 @@ namespace Ryujinx.Ava.Systems.Configuration
         /// Custom LDN Server
         /// </summary>
         public string LdnServer { get; set; }
+
+        /// <summary>
+        /// Whether this install talks to the OpenPak network at all
+        /// </summary>
+        public bool OpenPakEnabled { get; set; }
+
+        /// <summary>
+        /// host[:port] of the console-facing OpenPak edge, which the guest's traffic is sent to
+        /// </summary>
+        public string OpenPakConsoleServer { get; set; }
+
+        /// <summary>
+        /// The OpenPak website, where a person signs in and the account lives
+        /// </summary>
+        public string OpenPakWebsiteUrl { get; set; }
+
+        /// <summary>
+        /// Point the emulated console's DNS at OpenPak, by writing the Atmosphère hosts file
+        /// </summary>
+        public bool OpenPakRedirectGuestDns { get; set; }
 
         /// <summary>
         /// Uses Hypervisor over JIT if available

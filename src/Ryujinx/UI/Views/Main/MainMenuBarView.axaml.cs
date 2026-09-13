@@ -19,7 +19,6 @@ using Ryujinx.Ava.Utilities;
 using Ryujinx.Common;
 using Ryujinx.Common.Helper;
 using Ryujinx.Common.Utilities;
-using Ryujinx.HLE.HOS.Services.Account.OpenPak;
 using Ryujinx.HLE.HOS.Services.Nfc.AmiiboDecryption;
 using System;
 using System.Collections.Generic;
@@ -27,6 +26,9 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using OpenPakAccount = Ryujinx.OpenPak.OpenPakAccount;
+using OpenPakApi = Ryujinx.OpenPak.OpenPakApi;
+using OpenPakConfig = Ryujinx.OpenPak.OpenPakConfig;
 
 namespace Ryujinx.Ava.UI.Views.Main
 {
@@ -52,8 +54,16 @@ namespace Ryujinx.Ava.UI.Views.Main
             CompatibilityListMenuItem.Command = Commands.Create(() => CompatibilityListWindow.Show());
             LdnGameListMenuItem.Command = Commands.Create(() => LdnGamesListWindow.Show());
 
-            OpenPakAccountMenuItem.Command = Commands.Create(OpenPakAccount);
-            OpenPakWebsiteMenuItem.Command = Commands.Create(() => OpenHelper.OpenUrl(OpenPakWebsiteUrl));
+            OpenPakAccountMenuItem.Command = Commands.Create(() => OpenPakWindow.Show(OpenPakWindow.Page.Account));
+            OpenPakFriendsMenuItem.Command = Commands.Create(() => OpenPakWindow.Show(OpenPakWindow.Page.Friends));
+            OpenPakInvitationsMenuItem.Command = Commands.Create(() => OpenPakWindow.Show(OpenPakWindow.Page.Invitations));
+            OpenPakSavesMenuItem.Command = Commands.Create(() => OpenPakWindow.Show(OpenPakWindow.Page.Saves));
+            OpenPakModsMenuItem.Command = Commands.Create(() => OpenPakWindow.Show(OpenPakWindow.Page.Mods));
+            OpenPakNewsMenuItem.Command = Commands.Create(() => OpenPakWindow.Show(OpenPakWindow.Page.News));
+            OpenPakStatusMenuItem.Command = Commands.Create(() => OpenPakWindow.Show(OpenPakWindow.Page.Status));
+            OpenPakSettingsMenuItem.Command = Commands.Create(OpenSettings);
+            OpenPakSignOutMenuItem.Command = Commands.Create(OpenPakSignOut);
+            OpenPakWebsiteMenuItem.Command = Commands.Create(() => OpenHelper.OpenUrl(OpenPakConfig.WebsiteUrl));
             OpenPakMenuItem.SubmenuOpened += (_, _) => RefreshOpenPakStatus();
 
             UpdateMenuItem.Command = MainWindowViewModel.UpdateCommand;
@@ -211,32 +221,44 @@ namespace Ryujinx.Ava.UI.Views.Main
                 Window.Height = windowHeightScaled;
             });
         }
-        private const string OpenPakWebsiteUrl = "https://openpak.org";
-
         /// <summary>
-        /// The one OpenPak entry: an invitation to sign in until there is an account, and the
-        /// account itself afterwards — name, picture and all. Signing in and linking are one act
-        /// to the person doing it, so they are one line here.
+        /// The OpenPak menu: the account first, then the seven pages, then the housekeeping.
+        ///
+        /// Every page entry opens the same window at that page — one account, one window — and
+        /// the account line says who is signed in, so the menu answers "am I online" without
+        /// anything being opened at all.
         /// </summary>
         private void RefreshOpenPakStatus()
         {
-            OpenPakSession session = OpenPakSession.Instance;
+            bool signedIn = OpenPakApi.Instance.SignedIn;
 
-            OpenPakAccountMenuItem.IsEnabled = session.Enabled;
-            OpenPakAccountMenuItem.Header = !session.Enabled
-                ? LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_NoServer]
-                : session.Nickname ?? LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_SignInPrompt];
+            OpenPakAccountMenuItem.Header = signedIn
+                ? LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.MenuBar_OpenPak_SignedInAs,
+                    OpenPakAccount.Instance.DisplayName ?? OpenPakConfig.WebsiteUrl)
+                : LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_SignInPrompt];
 
-            if (session.IsLinked)
+            // The pages that are about this account are pointless without one; status is public
+            // and stays reachable, which is the point of it being public.
+            OpenPakFriendsMenuItem.IsEnabled = signedIn;
+            OpenPakInvitationsMenuItem.IsEnabled = signedIn;
+            OpenPakSavesMenuItem.IsEnabled = signedIn;
+            OpenPakSignOutMenuItem.IsEnabled = signedIn;
+
+            if (signedIn)
             {
                 _ = ShowAvatarAsync();
+            }
+            else
+            {
+                OpenPakAccountMenuItem.Icon = null;
             }
         }
 
         /// <summary>Their own picture in the menu, once it has been fetched; the glyph until then.</summary>
         private async Task ShowAvatarAsync()
         {
-            byte[] avatar = await OpenPakSession.Instance.AvatarAsync(CancellationToken.None);
+            byte[] avatar = await OpenPakApi.Instance.ImageAsync(
+                OpenPakAccount.Instance.Profile?.AvatarUrl, CancellationToken.None);
 
             if (avatar == null)
             {
@@ -260,35 +282,16 @@ namespace Ryujinx.Ava.UI.Views.Main
             });
         }
 
-        private async Task OpenPakAccount()
+        private async Task OpenPakSignOut()
         {
-            if (OpenPakSession.Instance.IsLinked)
-            {
-                await OpenPakProfileView.Show();
+            await OpenPakApi.Instance.SignOutAsync(CancellationToken.None);
 
-                return;
-            }
+            OpenPakAccount.Instance.Stop();
 
-            // A device account has to exist before there is anything to attach to a person.
-            await OpenPakSession.Instance.EnsureAsync(CancellationToken.None);
-
-            if (OpenPakSession.Instance.IdToken == null)
-            {
-                NotificationHelper.ShowWarning(LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_Label],
-                    LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_SignInFailed]);
-
-                return;
-            }
-
-            if (await OpenPakLinkView.Show())
-            {
-                NotificationHelper.ShowSuccess(LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_Label],
-                    LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.MenuBar_OpenPak_LinkDone,
-                        OpenPakSession.Instance.Nickname));
-            }
+            NotificationHelper.ShowInformation(LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_Label],
+                LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SignOutDone]);
 
             RefreshOpenPakStatus();
         }
-
     }
 }

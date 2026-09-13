@@ -1,0 +1,102 @@
+<UserControl
+    x:Class="Ryujinx.Ava.UI.Views.Settings.SettingsOpenPakView"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:ext="clr-namespace:Ryujinx.Ava.Common.Markup"
+    xmlns:viewModels="clr-namespace:Ryujinx.Ava.UI.ViewModels"
+    mc:Ignorable="d"
+    x:DataType="viewModels:SettingsViewModel">
+    <Design.DataContext>
+        <viewModels:SettingsViewModel />
+    </Design.DataContext>
+    <ScrollViewer
+        Name="OpenPakPage"
+        HorizontalAlignment="Stretch"
+        VerticalAlignment="Stretch"
+        HorizontalScrollBarVisibility="Disabled"
+        VerticalScrollBarVisibility="Auto">
+        <Border Classes="settings">
+            <StackPanel Margin="10" HorizontalAlignment="Stretch" Orientation="Vertical" Spacing="10">
+
+                <TextBlock Classes="h1" Text="{ext:Locale Dialog_OpenPak_SettingsHeaderNetwork}" />
+
+                <CheckBox Margin="10,0,0,0" IsChecked="{Binding OpenPakEnabled}">
+                    <TextBlock
+                        Text="{ext:Locale Dialog_OpenPak_SettingsEnable}"
+                        ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsEnableTooltip}" />
+                </CheckBox>
+
+                <StackPanel Margin="10,0,0,0" Orientation="Horizontal">
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        Width="200"
+                        Text="{ext:Locale Dialog_OpenPak_SettingsWebsite}"
+                        ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsWebsiteTooltip}" />
+                    <TextBox
+                        Width="320"
+                        Text="{Binding OpenPakWebsiteUrl}"
+                        ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsWebsiteTooltip}" />
+                </StackPanel>
+
+                <StackPanel Margin="10,0,0,0" Orientation="Horizontal">
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        Width="200"
+                        Text="{ext:Locale Dialog_OpenPak_SettingsConsoleServer}"
+                        ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsConsoleServerTooltip}" />
+                    <TextBox
+                        Width="320"
+                        Text="{Binding OpenPakConsoleServer}"
+                        ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsConsoleServerTooltip}" />
+                </StackPanel>
+
+                <StackPanel Margin="10,0,0,0" Orientation="Horizontal" Spacing="10">
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        Width="200"
+                        Text="{ext:Locale Dialog_OpenPak_SettingsCertificate}"
+                        ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsCertificateTooltip}" />
+                    <TextBlock
+                        Name="CertificateStatus"
+                        VerticalAlignment="Center"
+                        Width="320"
+                        TextWrapping="Wrap"
+                        Text="{Binding OpenPakCertificateStatus}" />
+                    <Button Name="FetchCertificateButton" MinWidth="90" Content="{ext:Locale Dialog_OpenPak_SettingsFetch}" />
+                </StackPanel>
+
+                <CheckBox Margin="10,0,0,0" IsChecked="{Binding OpenPakRedirectGuestDns}">
+                    <TextBlock
+                        Text="{ext:Locale Dialog_OpenPak_SettingsRedirectDns}"
+                        ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsRedirectDnsTooltip}" />
+                </CheckBox>
+
+                <Button
+                    Margin="10,0,0,0"
+                    Name="RefreshNetworkButton"
+                    HorizontalAlignment="Left"
+                    MinWidth="200"
+                    Content="{ext:Locale Dialog_OpenPak_SettingsRefreshNetwork}" />
+
+                <Separator Height="1" />
+
+                <TextBlock Classes="h1" Text="{ext:Locale Dialog_OpenPak_SettingsHeaderAccount}" />
+
+                <StackPanel Margin="10,0,0,0" Orientation="Horizontal" Spacing="10">
+                    <TextBlock Name="AccountStatus" VerticalAlignment="Center" Width="320" TextWrapping="Wrap" />
+                    <Button Name="SignInButton" MinWidth="110" Content="{ext:Locale Dialog_OpenPak_SignIn}" />
+                    <Button Name="SignOutButton" MinWidth="110" Content="{ext:Locale Dialog_OpenPak_SettingsSignOut}" />
+                </StackPanel>
+
+                <Button
+                    Margin="10,0,0,0"
+                    Name="OpenWindowButton"
+                    HorizontalAlignment="Left"
+                    MinWidth="200"
+                    Content="{ext:Locale Dialog_OpenPak_SettingsOpenWindow}" />
+            </StackPanel>
+        </Border>
+    </ScrollViewer>
+</UserControl>

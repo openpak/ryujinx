@@ -156,6 +156,11 @@ namespace Ryujinx.HLE.HOS.Applets.Error
                 message = "An error has occured.\n\nPlease try again later.";
             }
 
+            // The code names the module that failed and how; when a title refuses to go online
+            // this line is the question answered before anybody asks it.
+            Logger.Info?.PrintMsg(LogClass.ServiceAm,
+                $"Error applet shown: module {module}, description {description:0000} — {message.Replace("\n", " ")}");
+
             string[] buttons = GetButtonsText(module, description, "DlgBtn");
 
             (uint Module, uint Description) errorCodeTuple = (module, uint.Parse(description.ToString("0000")));

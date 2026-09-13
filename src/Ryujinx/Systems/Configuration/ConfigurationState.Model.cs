@@ -14,6 +14,7 @@ using Ryujinx.HLE;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using OpenPakConfig = Ryujinx.OpenPak.OpenPakConfig;
 using RyuLogger = Ryujinx.Common.Logging.Logger;
 
 namespace Ryujinx.Ava.Systems.Configuration
@@ -757,6 +758,57 @@ namespace Ryujinx.Ava.Systems.Configuration
         }
 
         /// <summary>
+        /// OpenPak configuration section.
+        ///
+        /// These are a thin front for <see cref="Ryujinx.OpenPak.OpenPakConfig"/>, which the guest
+        /// services read and which cannot see this project. Every value is pushed across as it
+        /// changes, so a settings window that is applied takes effect without a restart.
+        /// </summary>
+        public class OpenPakSection
+        {
+            /// <summary>
+            /// Whether this install talks to OpenPak. Off is upstream behaviour: offline.
+            /// </summary>
+            public ReactiveObject<bool> Enabled { get; private set; }
+
+            /// <summary>
+            /// host[:port] of the console-facing edge. Everything a game asks for arrives there
+            /// under Nintendo's own hostnames and is routed by SNI.
+            /// </summary>
+            public ReactiveObject<string> ConsoleServer { get; private set; }
+
+            /// <summary>
+            /// openpak.org, or whichever deployment the account lives on.
+            /// </summary>
+            public ReactiveObject<string> WebsiteUrl { get; private set; }
+
+            /// <summary>
+            /// Write the Atmosphère hosts file on the virtual SD card, so the emulated console
+            /// resolves Nintendo's names to OpenPak without anyone editing a disk image.
+            /// </summary>
+            public ReactiveObject<bool> RedirectGuestDns { get; private set; }
+
+            public OpenPakSection()
+            {
+                Enabled = new ReactiveObject<bool>();
+                Enabled.LogChangesToValue(nameof(Enabled));
+                Enabled.Event += (_, e) => OpenPakConfig.Enabled = e.NewValue;
+
+                ConsoleServer = new ReactiveObject<string>();
+                ConsoleServer.LogChangesToValue(nameof(ConsoleServer));
+                ConsoleServer.Event += (_, e) => OpenPakConfig.ConsoleServer = e.NewValue;
+
+                WebsiteUrl = new ReactiveObject<string>();
+                WebsiteUrl.LogChangesToValue(nameof(WebsiteUrl));
+                WebsiteUrl.Event += (_, e) => OpenPakConfig.WebsiteUrl = e.NewValue;
+
+                RedirectGuestDns = new ReactiveObject<bool>();
+                RedirectGuestDns.LogChangesToValue(nameof(RedirectGuestDns));
+                RedirectGuestDns.Event += (_, e) => OpenPakConfig.RedirectGuestDns = e.NewValue;
+            }
+        }
+
+        /// <summary>
         /// Debug configuration section
         /// </summary>
         public class DebugSection
@@ -886,6 +938,11 @@ namespace Ryujinx.Ava.Systems.Configuration
         public MultiplayerSection Multiplayer { get; private set; }
 
         /// <summary>
+        /// The OpenPak section
+        /// </summary>
+        public OpenPakSection OpenPak { get; private set; }
+
+        /// <summary>
         /// The Debug
         /// </summary>
         public DebugSection Debug { get; private set; }
@@ -943,6 +1000,7 @@ namespace Ryujinx.Ava.Systems.Configuration
             Graphics = new GraphicsSection();
             Hid = new HidSection();
             Multiplayer = new MultiplayerSection();
+            OpenPak = new OpenPakSection();
             Debug = new DebugSection();
             Hacks = new HacksSection();
             UpdateCheckerType = new ReactiveObject<UpdaterType>();

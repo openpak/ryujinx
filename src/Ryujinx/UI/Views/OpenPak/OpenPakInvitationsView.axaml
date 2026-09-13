@@ -1,0 +1,56 @@
+<UserControl
+    x:Class="Ryujinx.Ava.UI.Views.OpenPak.OpenPakInvitationsView"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:ext="clr-namespace:Ryujinx.Ava.Common.Markup"
+    xmlns:viewModels="clr-namespace:Ryujinx.Ava.UI.ViewModels"
+    mc:Ignorable="d"
+    x:DataType="viewModels:OpenPakViewModel">
+    <Design.DataContext>
+        <viewModels:OpenPakViewModel />
+    </Design.DataContext>
+    <Grid Margin="20" RowDefinitions="Auto,Auto,*">
+        <Button
+            Grid.Row="0"
+            Name="RefreshButton"
+            Content="{ext:Locale Dialog_OpenPak_Refresh}"
+            HorizontalAlignment="Left"
+            MinWidth="110"
+            Margin="0,0,0,16"
+            IsEnabled="{Binding Ready}" />
+
+        <TextBlock
+            Grid.Row="1"
+            Text="{ext:Locale Dialog_OpenPak_InvitationsEmpty}"
+            IsVisible="{Binding InvitationsEmpty}"
+            Opacity="0.7"
+            Margin="4,0,0,12" />
+
+        <ListBox Grid.Row="2" ItemsSource="{Binding Invitations}" Background="Transparent">
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="viewModels:OpenPakInvitationModel">
+                    <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,6">
+                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding TitleName}" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding From}" Opacity="0.8" FontSize="12" />
+                            <TextBlock Text="{Binding Expires}" Opacity="0.6" FontSize="12" />
+                        </StackPanel>
+                        <Button
+                            Grid.Column="1"
+                            Margin="6,0,0,0"
+                            Classes="accent"
+                            Click="OnPlay"
+                            Content="{ext:Locale Dialog_OpenPak_InvitationsPlay}" />
+                        <Button
+                            Grid.Column="2"
+                            Margin="6,0,0,0"
+                            Click="OnDecline"
+                            Content="{ext:Locale Dialog_OpenPak_InvitationsDecline}" />
+                    </Grid>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </Grid>
+</UserControl>

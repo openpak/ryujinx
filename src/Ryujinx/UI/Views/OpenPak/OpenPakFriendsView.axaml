@@ -1,0 +1,123 @@
+<UserControl
+    x:Class="Ryujinx.Ava.UI.Views.OpenPak.OpenPakFriendsView"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:ext="clr-namespace:Ryujinx.Ava.Common.Markup"
+    xmlns:viewModels="clr-namespace:Ryujinx.Ava.UI.ViewModels"
+    mc:Ignorable="d"
+    x:DataType="viewModels:OpenPakViewModel">
+    <Design.DataContext>
+        <viewModels:OpenPakViewModel />
+    </Design.DataContext>
+    <Grid Margin="20" RowDefinitions="Auto,Auto,*">
+
+        <!-- Add by friend code: the only way onto someone's list, so it is the first thing here. -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" Margin="0,0,0,16">
+            <TextBox
+                Name="FriendCodeBox"
+                Width="240"
+                Text="{Binding FriendCodeEntry}"
+                PlaceholderText="{ext:Locale Dialog_OpenPak_FriendsAddPlaceholder}"
+                IsEnabled="{Binding SignedIn}" />
+            <Button
+                Name="AddButton"
+                Classes="accent"
+                Content="{ext:Locale Dialog_OpenPak_FriendsAdd}"
+                MinWidth="90"
+                IsEnabled="{Binding Ready}" />
+            <Button
+                Name="RefreshButton"
+                Content="{ext:Locale Dialog_OpenPak_Refresh}"
+                MinWidth="110"
+                IsEnabled="{Binding Ready}" />
+        </StackPanel>
+
+        <TextBlock
+            Grid.Row="1"
+            Text="{ext:Locale Dialog_OpenPak_NeedSignIn}"
+            IsVisible="{Binding SignedOut}"
+            Margin="0,0,0,12" />
+
+        <TabControl Grid.Row="2" IsVisible="{Binding SignedIn}">
+            <TabItem Header="{ext:Locale Dialog_OpenPak_FriendsList}">
+                <Grid RowDefinitions="Auto,*">
+                    <TextBlock
+                        Grid.Row="0"
+                        Margin="4,12"
+                        Text="{ext:Locale Dialog_OpenPak_FriendsEmpty}"
+                        IsVisible="{Binding FriendsEmpty}"
+                        TextWrapping="Wrap"
+                        Opacity="0.7" />
+                    <ListBox Grid.Row="1" ItemsSource="{Binding Friends}" Background="Transparent">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="viewModels:OpenPakFriendModel">
+                                <Grid ColumnDefinitions="Auto,*,Auto,Auto" Margin="0,4">
+                                    <!-- Presence as a dot: the list is scanned, not read. -->
+                                    <Ellipse
+                                        Grid.Column="0"
+                                        Width="10"
+                                        Height="10"
+                                        Margin="0,0,12,0"
+                                        VerticalAlignment="Center"
+                                        Fill="{Binding PresenceBrush}" />
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding Status}" Opacity="0.7" FontSize="12" />
+                                    </StackPanel>
+                                    <Button
+                                        Grid.Column="2"
+                                        Margin="6,0,0,0"
+                                        Click="OnRemove"
+                                        Content="{ext:Locale Dialog_OpenPak_FriendsRemove}" />
+                                    <Button
+                                        Grid.Column="3"
+                                        Margin="6,0,0,0"
+                                        Click="OnBlock"
+                                        Content="{ext:Locale Dialog_OpenPak_FriendsBlock}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </TabItem>
+            <TabItem Header="{ext:Locale Dialog_OpenPak_FriendsRequests}">
+                <Grid RowDefinitions="Auto,*">
+                    <TextBlock
+                        Grid.Row="0"
+                        Margin="4,12"
+                        Text="{ext:Locale Dialog_OpenPak_FriendsRequestsEmpty}"
+                        IsVisible="{Binding RequestsEmpty}"
+                        Opacity="0.7" />
+                    <ListBox Grid.Row="1" ItemsSource="{Binding Requests}" Background="Transparent">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="viewModels:OpenPakRequestModel">
+                                <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,4">
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding Status}" Opacity="0.7" FontSize="12" />
+                                    </StackPanel>
+                                    <Button
+                                        Grid.Column="1"
+                                        Margin="6,0,0,0"
+                                        Classes="accent"
+                                        Click="OnAccept"
+                                        IsVisible="{Binding CanAccept}"
+                                        Content="{ext:Locale Dialog_OpenPak_FriendsAccept}" />
+                                    <!-- Declining someone else's request and withdrawing your own
+                                         are the same call, so the button only changes its word. -->
+                                    <Button
+                                        Grid.Column="2"
+                                        Margin="6,0,0,0"
+                                        Click="OnDecline"
+                                        Content="{Binding DeclineText}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </TabItem>
+        </TabControl>
+    </Grid>
+</UserControl>

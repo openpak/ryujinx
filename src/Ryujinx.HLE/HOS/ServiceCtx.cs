@@ -18,6 +18,15 @@ namespace Ryujinx.HLE.HOS
         public BinaryWriter ResponseData { get; }
         public ulong ClientProcessId => Request.HandleDesc is { HasPId: true } ? Request.HandleDesc.PId : Process.Pid;
 
+        // Deferred Bsd Poll support. A poll that would block parks itself instead of spinning the
+        // single Bsd thread: the handler snapshots the pollfd array here, marks the request as
+        // deferred, and the server loop re-runs it non-blocking until it is ready or overdue.
+        public bool PollDeferRequested;
+        public long PollDeadlineMs;
+        public bool PollForceNonBlocking;
+        public byte[] PollInputSnapshot;
+        public int PollResult;
+
         public ServiceCtx(
             Switch device,
             KProcess process,

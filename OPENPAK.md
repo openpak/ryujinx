@@ -26,40 +26,63 @@ Upstream is `upstream` (`git.ryujinx.app`); `origin` is `openpak/ryujinx`.
 
 ## What is missing, in the order it blocks a title
 
-1. ~~**Trusting the OpenPak CA.**~~ **Done.** `SslManagedSocketConnection` calls `AuthenticateAsClient` with
-   default validation, so the game's TLS peer is checked against the *host machine's* trust
-   store. OpenPak serves `*.nintendo.net` names from its own CA, which is not there and cannot
-   be publicly issued. Fix: pin the OpenPak CA in the emulator — a validation callback that
-   accepts a chain rooted at `openpak-ca.pem` in the Ryujinx data dir, for redirected hosts only.
-   Not a blanket "accept any certificate" bypass: the whole point of the redirect is that
-   whoever holds that name holds the session.
-2. ~~**Device auth.**~~ **Done.** `dauth:0` (`Services/Account/Dauth/IService.cs`) is an empty stub. OpenPak's
-   `nx-baas` serves the dauth/aauth/dcert surface; the emulator has to actually ask for a device
-   token instead of never asking.
-3. ~~**The BAAS access token.**~~ **Done.** `acc:aa` (`IBaasAccessTokenAccessor`) is an empty stub and
-   `ManagerServer`'s id-token commands are `PrintStub`. A title online needs an id_token carrying
-   OpenPak's `nnex` claim, signed by the key `nx-baas` publishes as JWKS, so NPLN/NEX/Photon
-   servers resolve one identity per account.
-4. **Getting an identity into the emulator.** The token must come *from* OpenPak, not be minted
-   locally: the emulator signs in against the account core and receives a token, the same
-   identity a linked console gets. A signing key sitting in the user's data directory would let
-   any user mint any identity; that is a rig shortcut, not a design.
-5. **NAT check** (`nncs1`/`nncs2`, UDP) and per-title patches, as titles need them.
+1. ~~**Trusting the OpenPak CA.**~~ **Done.** A validation callback accepts a chain rooted at the
+   OpenPak CA for the guest's TLS, and refuses everything else exactly as before. The CA is
+   fetched from the website over ordinary public TLS by Settings -> OpenPak -> Fetch, rather than
+   being dropped into a data directory by hand.
+2. ~~**Device auth.**~~ **Done.** The emulator walks dauth/aauth and asks for a device token.
+3. ~~**The BAAS access token.**~~ **Done.** `acc:u0` hands the guest a real id_token carrying
+   OpenPak's `nnex` claim.
+4. ~~**Getting an identity into the emulator.**~~ **Done.** Two halves, both from OpenPak and
+   neither minted locally: the person signs in to the website (`POST /api/v1/token`, bearer in
+   the OS password store), and the emulated console links its device account to that account
+   through the console's own QR/code screen.
+5. ~~**The friend graph.**~~ **Done.** `friend:u` serves the account's real list, ids, counts and
+   presence from a cache kept warm on a timer. What is still honestly stubbed, and why:
+   `GetFriendRequestList` (20201), because `FriendRequestImpl`'s layout is not established and
+   zeros would be read as data; the favourites-only filter, because the core has no per-viewer
+   favourite flag yet; and the newly-arrived request count, because nothing tracks what the
+   console has already been shown.
+6. **NAT check** (`nncs1`/`nncs2`, UDP) and per-title patches, as titles need them.
+7. **Native News delivery.** `bcat:*` is not implemented, so the News page shows and saves the
+   dataset a title would receive rather than delivering it to the guest.
 
 ## Configuration surface
 
-One setting decides which server the emulator talks to, because that server receives the
-account token. Default: OpenPak production. An override is kept for local stacks and is
-restricted to loopback or an `openpak.org` host over TLS — anything else is refused and logged.
+Settings -> OpenPak, and nothing has to be typed that is already known:
 
-## How it is configured, for now
+- **Connect this emulator to OpenPak** — off is upstream behaviour, offline, with the made-up
+  id_token Ryujinx has always produced.
+- **Website** — where the account lives and sign-in happens. Ordinary public TLS.
+- **Console server** — `host[:port]` of the console-facing edge, which everything a *game* asks
+  for reaches under Nintendo's own hostnames, routed by SNI. Empty means the website's host, which
+  is right for any deployment serving both from one machine.
+- **Certificate** — Fetch pulls the OpenPak CA from the website and pins it. Until there is one,
+  no title can complete a handshake, and the page says so rather than leaving it to be discovered
+  inside a game.
+- **Point the emulated console's DNS at OpenPak** — writes a fenced block in the Atmosphere hosts
+  file on the virtual SD card. Entries outside the block are left alone, and turning it off
+  removes the block and nothing else.
 
-`OPENPAK_SERVER=host[:port]` and `OPENPAK_CA=/path/to/ca.pem` (default
-`<data dir>/openpak/ca.pem`). Unset, or no CA file, and the emulator behaves exactly as upstream
-does: offline, with the made-up id_token it has always produced. A GUI setting replaces this once
-the account link exists to put in it.
+`OPENPAK_SERVER`, `OPENPAK_CA` and `OPENPAK_WEBSITE` still override the settings, so the shared
+launchers keep working with no GUI in the loop.
 
-The device account and the client certificate are kept per server under `<data dir>/openpak/`.
+## What the OpenPak menu opens
+
+One window, seven pages, in the order every OpenPak emulator build uses:
+
+| Page | What it does |
+| --- | --- |
+| Account | Who is signed in, the friend code, the Switch identity, and the console link |
+| Friends | The list with presence, requests both ways, add by friend code, accept, decline, remove, block |
+| Invitations | What is waiting, and launching the title it is for |
+| Cloud saves | The allowance, and a title's savedata up and down (zipped; a download backs up the local copy first) |
+| Mods | The title's catalogue, installed into the folder Manage Mods already reads, each package checked against its published hash |
+| News | The BCAT dataset a title would receive, and a copy of it on disk |
+| Status | Who is online, per title and per network. Public, so it still answers when sign-in is the broken part |
+
+The account token lives in the OS password store — Keychain, Credential Manager, or libsecret —
+and there is deliberately no file fallback: without a store, sign-in refuses and says why.
 
 ## Linking
 
@@ -84,10 +107,47 @@ can reach. The form half needs nothing.
 
 ## Status
 
-Signing in and linking both work. The emulator completes the console's own chain against a live OpenPak
-(`dotnet test --filter OpenPakSessionTests`, with a server configured) and a game asking acc:u0
-for an id_token now gets a real one.
+Signing in, linking, and the friend graph all work: the emulator completes the console's own chain
+against a live OpenPak, a game asking `acc:u0` for an id_token gets a real one, and a title asking
+`friend:u` for its friend list gets the account's actual friends rather than an empty buffer.
 
-What is left before a title is actually online:
+`dotnet test --filter OpenPak` covers the certificate guard, the save archive round trip and its
+traversal refusal, and the hosts-file block. The session tests need a configured server and skip
+without one.
 
-- **NAT check** (`nncs1`/`nncs2`, UDP), and whatever a first title turns out to want.
+What is left before every title is online: **NAT check** (`nncs1`/`nncs2`, UDP), native **News**
+delivery (`bcat:*`), and whatever a first title turns out to want.
+
+### Online at launch, and invitations a console sent (2026-09-13)
+
+Being online was something a person had to ask for: nothing signed in until the OpenPak window
+was opened and refreshed, so an emulator sitting on the game list was offline, invisible to
+friends, and heard about nothing. The main window now signs in at launch, next to the network
+profile fetch it already did, and starts the account cache — the same two things that Refresh did.
+
+Invitations sent from a console land in the native inbox on `app.lp1.five.nintendo.net`, which is
+a different store from the core's `/api/v1/me/invitations` the Invitations page was reading. So
+one never appeared here. `OpenPakSession` now polls that inbox on the presence heartbeat (every
+third beat, 30s), the page shows those rows beside the core's, and an arrival is announced the
+same way a friend coming online is.
+
+No NPNS client. A console is *pushed* its invitations over Penne and this is not; the server
+queues that push, finds no connection, and drops it ten minutes later, while the invitation
+itself sits in the inbox for a day — so asking is what makes it visible, and it is what the
+server's own store-and-forward design expects. Push would be a FlatBuffers frontline connection
+(`nx-baas/docs/penne-protocol.md`) for one toast arriving sooner.
+
+Two things this does not do: read state is shared with every device on the account, so a console
+signed in as the same person marks these read from over there (they are still shown here —
+read is not gone); and the guest title is not handed the invitation, so accepting still means
+launching the title from the page rather than from inside a game.
+
+### Stardew system certificate support (2026-09-13)
+
+At game startup, enabling OpenPak supplies the configured CA through system
+certificate ID 1033, which Stardew requests. Disabling OpenPak retains the normal
+system certificate. No manually installed DER file or automatic Stardew executable
+patch is required. The earlier built-in patch application was removed after native
+Switch testing demonstrated that providing the CA through SSL works with the
+unmodified game. Restart the game after changing OpenPak settings or updating the
+CA. Invalid/non-CA files retain stock trust and produce a warning in the SSL log.

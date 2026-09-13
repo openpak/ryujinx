@@ -331,14 +331,16 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Sfdnsres
 
                 string targetHost = host;
 
-                if (DnsBlacklist.IsHostBlocked(host))
+                bool redirected = DnsMitmResolver.Instance.TryResolveRedirect(targetHost, out hostEntry);
+
+                if (!redirected && DnsBlacklist.IsHostBlocked(host))
                 {
                     Logger.Info?.Print(LogClass.ServiceSfdnsres, $"DNS Blocked: {host}");
 
                     netDbErrorCode = NetDbError.HostNotFound;
                     errno = GaiError.NoData;
                 }
-                else
+                else if (!redirected)
                 {
                     Logger.Info?.Print(LogClass.ServiceSfdnsres, $"Trying to resolve: {host}");
 
@@ -371,6 +373,11 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Sfdnsres
                 {
                     errno = GaiError.Success;
                     serializedSize = SerializeHostEntries(context, outputBufferPosition, outputBufferSize, hostEntry, addresses);
+
+                    // What the guest was actually handed: a malformed answer here looks, from
+                    // the game's side, exactly like a name that never resolved.
+                    Logger.Info?.Print(LogClass.ServiceBsd,
+                        $"[Sfdnsres] Resolved '{host}' -> {string.Join(", ", addresses.Select(a => a.ToString()))} ({serializedSize} bytes, errno {errno})");
                 }
             }
 
@@ -557,14 +564,16 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Sfdnsres
 
                 string targetHost = host;
 
-                if (DnsBlacklist.IsHostBlocked(host))
+                bool redirected = DnsMitmResolver.Instance.TryResolveRedirect(targetHost, out hostEntry);
+
+                if (!redirected && DnsBlacklist.IsHostBlocked(host))
                 {
                     Logger.Info?.Print(LogClass.ServiceSfdnsres, $"DNS Blocked: {host}");
 
                     netDbErrorCode = NetDbError.HostNotFound;
                     errno = GaiError.NoData;
                 }
-                else
+                else if (!redirected)
                 {
                     Logger.Info?.Print(LogClass.ServiceSfdnsres, $"Trying to resolve: {host}");
 

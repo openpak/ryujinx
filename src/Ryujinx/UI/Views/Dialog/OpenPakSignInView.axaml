@@ -1,0 +1,26 @@
+<UserControl
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ext="clr-namespace:Ryujinx.Ava.Common.Markup"
+    x:Class="Ryujinx.Ava.UI.Views.Dialog.OpenPakSignInView"
+    Width="420">
+    <StackPanel Spacing="12">
+        <TextBox Name="EmailBox" PlaceholderText="{ext:Locale Dialog_OpenPak_SignInEmail}" />
+        <TextBox Name="PasswordBox" PasswordChar="•" PlaceholderText="{ext:Locale Dialog_OpenPak_SignInPassword}" />
+        <!-- Named so the account's device list says which machine this is, rather than listing
+             three identical entries a person cannot tell apart when revoking one. -->
+        <TextBox Name="DeviceBox" PlaceholderText="{ext:Locale Dialog_OpenPak_SignInDevice}" />
+        <TextBlock Name="StatusText" TextWrapping="Wrap" IsVisible="False" />
+        <Button
+            Name="SignInButton"
+            Classes="accent"
+            Content="{ext:Locale Dialog_OpenPak_SignInSubmit}"
+            HorizontalAlignment="Stretch"
+            HorizontalContentAlignment="Center" />
+        <Button
+            Name="CreateButton"
+            Content="{ext:Locale Dialog_OpenPak_SignInCreate}"
+            HorizontalAlignment="Stretch"
+            HorizontalContentAlignment="Center" />
+    </StackPanel>
+</UserControl>

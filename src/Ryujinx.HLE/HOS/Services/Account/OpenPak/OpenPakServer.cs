@@ -10,6 +10,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
+using OpenPakConfig = Ryujinx.OpenPak.OpenPakConfig;
 
 namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 {
@@ -29,11 +30,22 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
     /// </summary>
     sealed class OpenPakServer
     {
-        private const string ServerVariable = "OPENPAK_SERVER";
-        private const string CaVariable = "OPENPAK_CA";
-
         private static OpenPakServer _current;
         private static bool _resolved;
+
+        static OpenPakServer()
+        {
+            // The settings window can point this somewhere else while the emulator is running, so
+            // the answer below is cached until something actually changes rather than forever.
+            OpenPakConfig.Changed += Forget;
+        }
+
+        /// <summary>Drop the cached answer, so the next ask re-reads the configuration.</summary>
+        public static void Forget()
+        {
+            _current = null;
+            _resolved = false;
+        }
 
         private readonly X509Certificate2 _ca;
         private X509Certificate2 _clientCertificate;
@@ -73,7 +85,12 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 
         private static OpenPakServer Resolve()
         {
-            string raw = (Environment.GetEnvironmentVariable(ServerVariable) ?? string.Empty).Trim();
+            if (!OpenPakConfig.Enabled)
+            {
+                return null;
+            }
+
+            string raw = OpenPakConfig.ResolvedConsoleServer;
 
             if (raw.Length == 0)
             {
@@ -91,18 +108,14 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                 port = parsed;
             }
 
-            string caPath = Environment.GetEnvironmentVariable(CaVariable);
-
-            if (string.IsNullOrWhiteSpace(caPath))
-            {
-                caPath = Path.Combine(AppDataManager.BaseDirPath, "openpak", "ca.pem");
-            }
+            string caPath = OpenPakConfig.CaPath;
 
             if (!File.Exists(caPath))
             {
                 Logger.Warning?.Print(LogClass.ServiceAcc,
-                    $"[OpenPak] {ServerVariable}={raw} is set but no CA certificate is at {caPath}. " +
-                    "Online services stay offline: nothing can verify a server serving Nintendo's names.");
+                    $"[OpenPak] {raw} is configured but no CA certificate is at {caPath}. " +
+                    "Online services stay offline: nothing can verify a server serving Nintendo's names. " +
+                    "Settings \u2192 OpenPak \u2192 Fetch fixes this.");
 
                 return null;
             }

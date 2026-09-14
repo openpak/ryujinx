@@ -29,6 +29,19 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
         private bool _isBlockingSocket;
         private int _previousReadTimeout;
 
+        // SslStream decrypts a whole TLS record into an internal buffer, and a
+        // caller-sized read — the Battle.net gateway layer reads WebSocket
+        // framing in two-byte pieces — can leave most of that record sitting
+        // there while Socket.Poll over the raw socket reports nothing to read.
+        // The guest then stalls until the next inbound TCP write pushes the
+        // poll. A read that returned exactly the requested count is the only
+        // visible trace that plaintext may remain, and while it may, Poll's
+        // verdict on the raw socket cannot be trusted. Skipping Poll is safe
+        // for non-blocking sockets: StartSslReadOperation pins ReadTimeout to
+        // 1 ms, so an empty buffer surfaces as WSAETIMEDOUT → WouldBlock
+        // instead of a hang.
+        private bool _sslMayHoldBufferedPlaintext;
+
         public SslManagedSocketConnection(BsdContext bsdContext, SslVersion sslVersion, int socketFd, ISocket socket)
         {
             _bsdContext = bsdContext;
@@ -196,7 +209,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
 
         public ResultCode Read(out int readCount, Memory<byte> buffer)
         {
-            if (!Socket.Poll(0, SelectMode.SelectRead))
+            if (!_sslMayHoldBufferedPlaintext && !Socket.Poll(0, SelectMode.SelectRead))
             {
                 readCount = -1;
 
@@ -208,9 +221,14 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
             try
             {
                 readCount = _stream.Read(buffer.Span);
+
+                // Exactly-full read: the record's tail may still be buffered.
+                // A short read or EOF means the internal buffer drained.
+                _sslMayHoldBufferedPlaintext = readCount > 0 && readCount == buffer.Length;
             }
             catch (IOException exception)
             {
+                _sslMayHoldBufferedPlaintext = false;
                 readCount = -1;
 
                 if (exception.InnerException is SocketException socketException)

@@ -174,7 +174,7 @@ namespace Ryujinx.Ava
             //       This needs to be investigated, but calling prctl() is better than modifying system-wide settings or leaving this be.
             if (!coreDumpArg)
             {
-                OsUtils.SetCoreDumpable(false);
+                OsUtils.SetCoreDumpable(true);
             }
 
             PreviewerDetached = true;

@@ -206,6 +206,37 @@ namespace Ryujinx.HLE.HOS.Services.Account.Acc.AccountService
             return ResultCode.Success;
         }
 
+        /// <summary>
+        /// CreateAuthorizationRequest: the title-driven console authorization
+        /// flow (Switchbrew IManagerForApplication 150 → IAuthorizationRequest).
+        /// The request object carries the proofs a third-party network login
+        /// collects — an authorization code or the id_token — both of which are
+        /// OpenPak's session id_token, since OpenPak is the network being
+        /// authorized against. Diablo II: Resurrected's Battle.net link is the
+        /// first caller seen here; the earlier stub answered a bare account id
+        /// and the guest read garbage as an object handle two lines later.
+        /// </summary>
+        public ResultCode CreateAuthorizationRequest(ServiceCtx context, out IAuthorizationRequest request)
+        {
+            // The request input carries the title's authorization
+            // configuration; its exact layout is unrecorded and nothing in it
+            // changes the answer for OpenPak, so it is logged for the record.
+            Logger.Stub?.PrintStub(LogClass.ServiceAcc, new { NetworkServiceAccountId });
+
+            request = new IAuthorizationRequest(_userId);
+
+            return ResultCode.Success;
+        }
+
+        /// <summary>Session id_token for the request objects: real when OpenPak
+        /// has a session, the locally-generated offline one when not.</summary>
+        public string SessionIdToken()
+        {
+            string openPakToken = OpenPakSession.Instance.IdToken;
+
+            return openPakToken ?? GenerateIdToken();
+        }
+
         public ResultCode StoreOpenContext(ServiceCtx context)
         {
             context.Device.System.AccountManager.StoreOpenedUsers();

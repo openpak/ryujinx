@@ -77,6 +77,7 @@ namespace Ryujinx.OpenPak
             // the profile's exact list while every client binned the whole profile over them.
             ".among.us",
             ".photonengine.io",
+            ".battle.net",
         ];
 
         private static readonly HttpClient _httpClient = new();

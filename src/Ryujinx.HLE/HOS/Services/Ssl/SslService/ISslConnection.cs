@@ -11,6 +11,21 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
     class ISslConnection : IpcService, IDisposable
     {
         private bool _doNotClockSocket;
+
+        /// <inheritdoc cref="ISslConnectionBase.DoNotCloseSocket" />
+        public bool DoNotCloseSocket
+        {
+            get => _doNotClockSocket;
+            set
+            {
+                _doNotClockSocket = value;
+
+                if (_connection != null)
+                {
+                    _connection.DoNotCloseSocket = value;
+                }
+            }
+        }
         private bool _getServerCertChain;
         private bool _skipDefaultVerify;
         private bool _enableAlpn;
@@ -20,6 +35,11 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
         private VerifyOption _verifyOption;
         private SessionCacheMode _sessionCacheMode;
         private string _hostName;
+
+        // Plaintext trace for battle.net SSL connections (OpenPak research):
+        // enabled with RYU_BNET_SSL_TRACE=1 in the emulator's environment.
+        private static readonly bool SslTraceEnabled =
+            Environment.GetEnvironmentVariable("RYU_BNET_SSL_TRACE") == "1";
 
         private SslManagedSocketConnection _connection;
         private BsdContext _bsdContext;
@@ -241,6 +261,11 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
             if (result == ResultCode.Success)
             {
                 context.ResponseData.Write(readCount);
+                if (SslTraceEnabled && _hostName != null && _hostName.Contains("battle.net"))
+                {
+                    int n = Math.Min(readCount, 96);
+                    Logger.Info?.Print(LogClass.ServiceSsl, $"SSLRX {_hostName} {readCount}B: {Convert.ToHexString(region.Memory.Span[..n])}");
+                }
             }
 
             return result;
@@ -257,6 +282,12 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
 
             // We don't dispose as this isn't supposed to be modified
             WritableRegion region = context.Memory.GetWritableRegion(context.Request.SendBuff[0].Position, (int)context.Request.SendBuff[0].Size);
+
+            if (SslTraceEnabled && _hostName != null && _hostName.Contains("battle.net"))
+            {
+                int n = (int)Math.Min(region.Memory.Length, 96);
+                Logger.Info?.Print(LogClass.ServiceSsl, $"SSLTX {_hostName} {region.Memory.Length}B: {Convert.ToHexString(region.Memory.Span[..n])}");
+            }
 
             // TODO: Better error management.
             ResultCode result = _connection.Write(out int writtenCount, region.Memory);
@@ -455,6 +486,12 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
             {
                 case OptionType.DoNotCloseSocket:
                     _doNotClockSocket = value;
+
+                    if (_connection != null)
+                    {
+                        _connection.DoNotCloseSocket = value;
+                    }
+
                     break;
 
                 case OptionType.GetServerCertChain:

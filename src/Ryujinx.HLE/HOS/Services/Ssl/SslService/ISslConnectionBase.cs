@@ -5,6 +5,13 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
 {
     interface ISslConnectionBase : IDisposable
     {
+        /// <summary>
+        /// When the title sets DoNotCloseSocket, destroying the connection must leave the
+        /// underlying socket alive and usable: the title keeps its descriptor and will
+        /// dial again on it (MK8D does exactly this between online attempts).
+        /// </summary>
+        bool DoNotCloseSocket { get; set; }
+
         int SocketFd { get; }
 
         ISocket Socket { get; }

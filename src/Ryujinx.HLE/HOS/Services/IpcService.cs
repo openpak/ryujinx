@@ -117,6 +117,28 @@ namespace Ryujinx.HLE.HOS.Services
 
                     context.ResponseData.Write(0L);
                     context.ResponseData.Write(0L);
+
+                    // A guest that calls into an object this side never handed out would otherwise
+                    // take the emulator down with a null reference on the very next line. Answer it
+                    // the way the firmware would answer a missing object — with an error — and
+                    // name the object and command in the log, which is the part a missing
+                    // implementation is most usefully reported as.
+                    if (service == null)
+                    {
+                        long guestMagic = context.RequestData.ReadInt64();
+                        long guestCommandId = context.RequestData.ReadInt64();
+
+                        Logger.Warning?.Print(LogClass.KernelIpc,
+                            $"{GetType().FullName}: guest called command {guestCommandId} on domain object {domainObjId}, which does not exist");
+
+                        context.ResponseData.BaseStream.Seek(0x10, SeekOrigin.Begin);
+                        context.ResponseData.Write(IpcMagic.Sfco);
+                        // Any non-zero result reaches the guest as an error; the firmware's own
+                        // domain-miss code is not established, so this is a stand-in, not a mimic.
+                        context.ResponseData.Write(1L);
+
+                        return;
+                    }
                 }
                 else if (domainCmd == 2)
                 {

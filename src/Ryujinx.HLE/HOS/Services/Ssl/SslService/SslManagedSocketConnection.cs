@@ -1,3 +1,4 @@
+using Ryujinx.Common.Logging;
 using Ryujinx.HLE.HOS.Services.Account.OpenPak;
 using Ryujinx.HLE.HOS.Services.Sockets.Bsd;
 using Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl;
@@ -16,6 +17,9 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
     class SslManagedSocketConnection : ISslConnectionBase
     {
         public int SocketFd { get; }
+
+        /// <inheritdoc cref="ISslConnectionBase.DoNotCloseSocket" />
+        public bool DoNotCloseSocket { get; set; }
 
         public ISocket Socket { get; }
 
@@ -130,7 +134,27 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
             StartSslOperation();
             _stream = new SslStream(new NetworkStream(((DefaultSocket)((ManagedSocket)Socket).Socket).BaseSocket, false), false, ValidateRemoteCertificate, null);
             hostName = RetrieveHostName(hostName);
-            _stream.AuthenticateAsClient(hostName, null, TranslateSslVersion(_sslVersion), false);
+            try
+            {
+                _stream.AuthenticateAsClient(hostName, null, TranslateSslVersion(_sslVersion), false);
+            }
+            catch (Exception exception)
+            {
+                // A failed handshake is the guest's problem to retry, not the
+                // emulator's to die on: real networks hand out refused
+                // connections, resets and mid-handshake EOFs, and a title that
+                // sees an SSL error shows its own retry UI. Before this caught,
+                // a single dropped handshake took the whole process down
+                // through the IPC dispatch.
+                Logger.Warning?.Print(LogClass.ServiceSsl, $"Handshake to {hostName} failed: {exception.Message}");
+
+                EndSslOperation();
+
+                return exception.InnerException is SocketException socketException &&
+                    socketException.SocketErrorCode == SocketError.ConnectionRefused
+                    ? ResultCode.ConnectionAbort
+                    : ResultCode.ConnectionReset;
+            }
             EndSslOperation();
 
             return ResultCode.Success;
@@ -282,7 +306,12 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
 
         public void Dispose()
         {
-            _bsdContext.CloseFileDescriptor(SocketFd);
+            // DoNotCloseSocket: the title keeps the descriptor and may dial again on it;
+            // closing the bsd fd here would hand it a dead socket on the next attempt.
+            if (!DoNotCloseSocket)
+            {
+                _bsdContext.CloseFileDescriptor(SocketFd);
+            }
         }
     }
 }

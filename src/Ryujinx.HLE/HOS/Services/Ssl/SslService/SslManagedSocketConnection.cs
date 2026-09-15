@@ -140,7 +140,19 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
         /// Anything not issued by that CA is refused exactly as before.
         /// </summary>
         private static bool ValidateRemoteCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors errors)
-            => errors == SslPolicyErrors.None || (OpenPakServer.Current?.Validate(certificate, errors) ?? false);
+        {
+            // Research loop for the D2R gateway: a locally-run gateway terminates TLS for the
+            // battle.net names itself, and the OpenPak CA cannot issue for them. Explicit env
+            // opt-in AND a battle.net name only; everything else validates exactly as before.
+            if (Environment.GetEnvironmentVariable("RYU_BNET_DEV_TLS") == "1" &&
+                sender is SslStream stream &&
+                stream.TargetHostName.EndsWith(".battle.net", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return errors == SslPolicyErrors.None || (OpenPakServer.Current?.Validate(certificate, errors) ?? false);
+        }
 
         public ResultCode Handshake(string hostName)
         {

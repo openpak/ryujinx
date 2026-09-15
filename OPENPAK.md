@@ -151,3 +151,23 @@ patch is required. The earlier built-in patch application was removed after nati
 Switch testing demonstrated that providing the CA through SSL works with the
 unmodified game. Restart the game after changing OpenPak settings or updating the
 CA. Invalid/non-CA files retain stock trust and produce a warning in the SSL log.
+
+### Pia sessions, and the Diablo II: Resurrected groundwork (2026-09-14 – 2026-09-15)
+
+Online titles stay connected: the game's UDP receives no longer come back ETIMEDOUT from
+deferred-poll re-checks (the IClient port from Ryujinx-Nextendo) — the NPLN/Pia stack read
+that as a fatal error and abandoned the session at the co-op screen. Live-verified: auth,
+ActivateUser, SubscribeFriendUsers and QueryGameSessions complete, and the farm list renders
+stably.
+
+D2R's Battle.net link was the next wall, and the groundwork is in: `IManagerForApplication.
+CreateAuthorizationRequest` (150) returns a real IAuthorizationRequest instead of a stub —
+invoking it completes locally (the user is already signed in), IsAuthorized is yes, and
+GetAuthorizationCode/GetIdToken hand over the OpenPak session id_token. The SSL layer around
+it hardened: a failed handshake returns ConnectionReset/ConnectionAbort to the guest instead
+of tearing down the process, Dispose honours DoNotCloseSocket so a title can dial again on its
+descriptor, and the network profile blocks `.battle.net` like the other third-party hosts. Two
+opt-in envs serve the local gateway experiment loop
+(`servers/diablo-ii-resurrected/next-session.md`): `RYU_BNET_SSL_TRACE=1` logs guest-side
+plaintext for battle.net connections, and `RYU_BNET_DEV_TLS=1` accepts a locally-terminated
+battle.net TLS with a self-signed cert — every other certificate validates exactly as before.

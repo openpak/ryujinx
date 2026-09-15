@@ -1,0 +1,33 @@
+# Next session — ryujinx
+
+Updated 2026-09-15.
+
+Upstream Ryujinx (MIT) plus a C# OpenPak client: console-chain sign-in and linking, the
+friend graph, invitations, cloud saves, mods, news, status (OPENPAK.md). Released at
+`openpak-v0.1.0`; the five commits since — sign-in at launch, the Pia deferred-poll fix, and
+the Diablo II: Resurrected / Battle.net groundwork — are untagged.
+
+## Where things stand
+
+- Sign-in at launch and native-inbox invitation polling (2026-09-13, OPENPAK.md).
+- Pia/NPLN sessions stay up live: deferred-poll IClient port (3bab55478) — auth,
+  ActivateUser, SubscribeFriendUsers, QueryGameSessions complete; the farm list renders.
+- D2R groundwork (5ce4ea9f0, 0df1f35a7, 8c86aeaa6): a real IAuthorizationRequest (cmd 150)
+  hands the OpenPak session id_token to D2R's Battle.net link; SSL hardening around it;
+  `RYU_BNET_SSL_TRACE`, `RYU_BNET_DEV_TLS`. This fork is the client side of the
+  servers/diablo-ii-resurrected local loop.
+
+## Next steps
+
+- Cut `openpak-v0.1.1` (local Linux build first — PRD rule).
+- Still blocking titles: NAT check (`nncs1`/`nncs2`, UDP), native News delivery (`bcat:*`).
+- D2R: follow the game-server stage in servers/diablo-ii-resurrected/next-session.md — fork
+  changes only as the gateway experiments demand.
+
+## Pointers
+
+- `../../servers/diablo-ii-resurrected/next-session.md` — the D2R frontier and the local
+  loop that drives `RYU_BNET_*`.
+- [`../prds/`](../prds/README.md) — emulator-wide PRDs (`emulators/prds/` in the workspace):
+  emulator-integration-prd.md (E2), emulator-network-profile-prd.md.
+- `OPENPAK.md` — this fork's own readme.

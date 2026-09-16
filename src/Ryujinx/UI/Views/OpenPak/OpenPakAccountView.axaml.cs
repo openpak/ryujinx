@@ -23,6 +23,8 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
                     await model.RefreshAsync();
                     await model.RefreshStatusAsync();
                 }
+
+                RefreshConsole();
             };
 
             RefreshButton.Click += async (_, _) =>
@@ -40,6 +42,8 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
                 {
                     await model.SignOutAsync();
                 }
+
+                RefreshConsole();
             };
 
             CopyCodeButton.Click += async (_, _) =>

@@ -21,7 +21,7 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
             {
                 if (DataContext is OpenPakViewModel model)
                 {
-                    await model.RefreshModsAsync();
+                    await model.RefreshModsAsync(force: true);
                 }
             };
 

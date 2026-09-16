@@ -31,6 +31,13 @@ namespace Ryujinx.Ava.UI.Views.Dialog
             DeviceBox.Text = $"Ryujinx on {Environment.MachineName}";
 
             SignInButton.Click += async (_, _) => await SignInAsync();
+            PasswordBox.KeyDown += async (_, e) =>
+            {
+                if (e.Key == Avalonia.Input.Key.Enter && SignInButton.IsEnabled)
+                {
+                    await SignInAsync();
+                }
+            };
             CreateButton.Click += (_, _) => OpenHelper.OpenUrl(OpenPakConfig.WebsiteUrl + "/register");
 
             if (!SecretStore.Available)

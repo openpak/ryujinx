@@ -77,11 +77,12 @@ namespace Ryujinx.Ava.UI.Windows
 
             window.Select(page);
 
-            await ShowAsync(window);
-
             // Opening at the page the pane already starts on changes no selection, so nothing
-            // would otherwise load it: pull what this page shows, now that the window is up.
-            await window.RefreshPage(page);
+            // would otherwise load it. ShowAsync is modal and returns on close, so this has to
+            // hang off Opened rather than follow the await.
+            window.Opened += async (_, _) => await window.RefreshPage(page);
+
+            await ShowAsync(window);
         }
 
         /// <summary>Fetch everything <paramref name="page"/> displays, once, on demand.</summary>
@@ -112,7 +113,6 @@ namespace Ryujinx.Ava.UI.Windows
         /// Per-page rather than all at once: opening the window should not pull every title's mod
         /// catalogue, and a page nobody visits should cost nothing.
         /// </summary>
-        /// <summary>Show the page, and fetch what it needs on the way in.</summary>
         private async void OnPageChanged(object sender, FANavigationViewSelectionChangedEventArgs args)
         {
             if (args.SelectedItem is not FANavigationViewItem { Tag: string tag })

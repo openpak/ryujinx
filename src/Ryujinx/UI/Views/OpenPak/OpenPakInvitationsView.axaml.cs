@@ -54,6 +54,9 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
                 return;
             }
 
+            // This window is modal over the main one; a game starting behind it is unreachable.
+            (TopLevel.GetTopLevel(this) as Window)?.Close();
+
             await RyujinxApp.MainWindow.ViewModel.LoadApplication(application);
         }
 

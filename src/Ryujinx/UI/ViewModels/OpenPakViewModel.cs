@@ -28,8 +28,12 @@ namespace Ryujinx.Ava.UI.ViewModels
     public class OpenPakViewModel : BaseModel, IDisposable
     {
         private readonly CancellationTokenSource _cancellation = new();
+        private readonly SemaphoreSlim _gate = new(1, 1);
         private readonly ApplicationLibrary _library;
 
+        private int _inFlight;
+        private string _modsTitle;
+        private string _newsTitle;
         private bool _busy;
         private string _message;
         private Bitmap _avatar;
@@ -376,12 +380,14 @@ namespace Ryujinx.Ava.UI.ViewModels
 
         // ---- mods ----
 
-        public async Task RefreshModsAsync()
+        public async Task RefreshModsAsync(bool force = false)
         {
-            if (SelectedTitle == null)
+            if (SelectedTitle == null || (!force && _modsTitle == SelectedTitle.IdString))
             {
                 return;
             }
+
+            _modsTitle = SelectedTitle.IdString;
 
             await Guarded(async () =>
             {
@@ -460,12 +466,14 @@ namespace Ryujinx.Ava.UI.ViewModels
 
         // ---- news ----
 
-        public async Task RefreshNewsAsync()
+        public async Task RefreshNewsAsync(bool force = false)
         {
-            if (SelectedTitle == null)
+            if (SelectedTitle == null || (!force && _newsTitle == SelectedTitle.IdString))
             {
                 return;
             }
+
+            _newsTitle = SelectedTitle.IdString;
 
             await Guarded(async () =>
             {
@@ -586,12 +594,22 @@ namespace Ryujinx.Ava.UI.ViewModels
         /// </summary>
         private async Task Guarded(Func<Task> work)
         {
-            if (Busy)
+            // Queued, not dropped: a page that asks for two things on the way in gets both.
+            if (Interlocked.Increment(ref _inFlight) == 1)
             {
-                return;
+                Busy = true;
             }
 
-            Busy = true;
+            try
+            {
+                await _gate.WaitAsync(_cancellation.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                Interlocked.Decrement(ref _inFlight);
+
+                return;
+            }
 
             try
             {
@@ -609,7 +627,12 @@ namespace Ryujinx.Ava.UI.ViewModels
             }
             finally
             {
-                Busy = false;
+                _gate.Release();
+
+                if (Interlocked.Decrement(ref _inFlight) == 0)
+                {
+                    Busy = false;
+                }
             }
         }
 
@@ -763,6 +786,7 @@ namespace Ryujinx.Ava.UI.ViewModels
 
             _cancellation.Cancel();
             _cancellation.Dispose();
+            _gate.Dispose();
 
             GC.SuppressFinalize(this);
         }

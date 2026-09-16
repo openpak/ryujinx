@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Interactivity;
 using Ryujinx.Ava.Common.Locale;
 using Ryujinx.Ava.UI.Helpers;
 using Ryujinx.Ava.UI.ViewModels;
@@ -26,25 +27,6 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
                 }
             };
 
-            DownloadButton.Click += async (_, _) =>
-            {
-                if (DataContext is not OpenPakViewModel { SelectedTitle: not null } model)
-                {
-                    return;
-                }
-
-                bool replace = await ContentDialogHelper.CreateChoiceDialog(
-                    LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
-                    LocaleManager.Instance.UpdateAndGetDynamicValue(
-                        LocaleKeys.Dialog_OpenPak_SavesOverwriteConfirm, model.SelectedTitle.Name),
-                    string.Empty);
-
-                if (replace)
-                {
-                    await model.DownloadSaveAsync(model.SelectedTitle);
-                }
-            };
-
             UploadButton.Click += async (_, _) =>
             {
                 if (DataContext is OpenPakViewModel { SelectedTitle: not null } model)
@@ -52,6 +34,36 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
                     await model.UploadSaveAsync(model.SelectedTitle);
                 }
             };
+        }
+
+        private OpenPakViewModel Model => DataContext as OpenPakViewModel;
+
+        /// <summary>Take the cloud copy: asked about, because it replaces the save being played.</summary>
+        private async void OnDownload(object sender, RoutedEventArgs args)
+        {
+            if (Model == null || (sender as Control)?.DataContext is not OpenPakSaveModel { Application: not null } row)
+            {
+                return;
+            }
+
+            bool replace = await ContentDialogHelper.CreateChoiceDialog(
+                LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
+                LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_SavesOverwriteConfirm, row.TitleName),
+                string.Empty);
+
+            if (replace)
+            {
+                await Model.DownloadSaveAsync(row.Application);
+            }
+        }
+
+        /// <summary>Keep the local copy: it goes up as the newest version, over whatever is there.</summary>
+        private async void OnUpload(object sender, RoutedEventArgs args)
+        {
+            if (Model != null && (sender as Control)?.DataContext is OpenPakSaveModel { Application: not null } row)
+            {
+                await Model.UploadSaveAsync(row.Application);
+            }
         }
     }
 }

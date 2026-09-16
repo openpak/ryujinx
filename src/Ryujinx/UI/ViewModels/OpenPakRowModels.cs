@@ -1,5 +1,6 @@
 using Avalonia.Media;
 using Ryujinx.Ava.Common.Locale;
+using Ryujinx.Ava.Systems.AppLibrary;
 using Ryujinx.OpenPak;
 using System;
 using System.Linq;
@@ -97,10 +98,12 @@ namespace Ryujinx.Ava.UI.ViewModels
     /// <summary>Every cloud version of one title's save, summarised.</summary>
     public class OpenPakSaveModel : BaseModel
     {
-        public OpenPakSaveModel(OpenPakSave save, string titleName)
+        public OpenPakSaveModel(OpenPakSave save, ApplicationData application, string localDetail)
         {
             TitleId = save.TitleId;
-            TitleName = string.IsNullOrEmpty(titleName) ? save.TitleId : titleName;
+            TitleName = application?.Name ?? save.TitleId;
+            Application = application;
+            LocalDetail = localDetail;
 
             OpenPakSaveVersion newest = save.Newest;
 
@@ -126,6 +129,14 @@ namespace Ryujinx.Ava.UI.ViewModels
         public string NewestVersion { get; }
         public string Detail { get; }
         public bool Conflict { get; }
+
+        /// <summary>The installed title, or null when the cloud holds a save for one that is not here.</summary>
+        public ApplicationData Application { get; }
+
+        /// <summary>What is on this machine for the title: when it was last written and what it was synced with.</summary>
+        public string LocalDetail { get; }
+
+        public bool Installed => Application != null;
     }
 
     /// <summary>One published mod, with what this install has done about it.</summary>

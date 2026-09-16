@@ -286,7 +286,10 @@ namespace Ryujinx.Ava.UI.ViewModels
 
                     foreach (OpenPakSave save in saves)
                     {
-                        Saves.Add(new OpenPakSaveModel(save, NameOf(save.TitleId)));
+                        ApplicationData application = Titles.FirstOrDefault(title =>
+                            title.IdString.Equals(save.TitleId, StringComparison.OrdinalIgnoreCase));
+
+                        Saves.Add(new OpenPakSaveModel(save, application, LocalDetailOf(application)));
                     }
 
                     OnPropertyChanged(nameof(SavesEmpty));
@@ -338,6 +341,8 @@ namespace Ryujinx.Ava.UI.ViewModels
                 Message = LocaleManager.Instance.UpdateAndGetDynamicValue(
                     LocaleKeys.Dialog_OpenPak_SavesDownloaded, application.Name);
             });
+
+            await RefreshSavesAsync();
         }
 
         public async Task UploadSaveAsync(ApplicationData application)
@@ -744,6 +749,31 @@ namespace Ryujinx.Ava.UI.ViewModels
                 title.IdString.Equals(titleId, StringComparison.OrdinalIgnoreCase));
 
             return application?.Name ?? titleId.ToUpperInvariant();
+        }
+
+        /// <summary>
+        /// The local side of a cloud save, so a conflict is a comparison and not a guess: when
+        /// the files were last written, and which cloud version they were last in step with.
+        /// </summary>
+        private static string LocalDetailOf(ApplicationData application)
+        {
+            if (application == null || !ApplicationHelper.TryGetUserSaveDirectory(application, out string directory))
+            {
+                return LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SavesNoLocalCopy];
+            }
+
+            DateTime? written = OpenPakSaves.LastWrite(directory);
+
+            if (written == null)
+            {
+                return LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SavesNoLocalCopy];
+            }
+
+            string synced = OpenPakSaves.Read(directory);
+
+            return synced == null
+                ? LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_SavesLocalNever, $"{written:g}")
+                : LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_SavesLocal, $"{written:g}", synced);
         }
 
         /// <summary>Move a save directory aside before it is overwritten, keeping one generation.</summary>

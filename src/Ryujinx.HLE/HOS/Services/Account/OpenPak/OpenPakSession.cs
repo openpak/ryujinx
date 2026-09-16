@@ -140,6 +140,10 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                 }
 
                 await LoginAsync(cancellationToken);
+
+                // A signed-in person and an unlinked console is a state nobody asked for: the
+                // website already holds the proof, so the link follows the login on its own.
+                await LinkFromAccountLockedAsync(cancellationToken);
             }
             catch (Exception exception)
             {
@@ -150,6 +154,58 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             finally
             {
                 _gate.Release();
+            }
+        }
+
+        /// <summary>
+        /// Bind this install to the account that is signed in to the website, with the token the
+        /// website mints for it. The e-mail and password are never asked for again: a person who
+        /// signed in once has proved everything the console's link page would have asked.
+        /// </summary>
+        public async Task<bool> LinkFromAccountAsync(CancellationToken cancellationToken)
+        {
+            if (!Enabled)
+            {
+                return false;
+            }
+
+            await _gate.WaitAsync(cancellationToken);
+
+            try
+            {
+                if (!Fresh())
+                {
+                    await LoginAsync(cancellationToken);
+                }
+
+                await LinkFromAccountLockedAsync(cancellationToken);
+
+                return IsLinked;
+            }
+            catch (Exception exception)
+            {
+                Logger.Warning?.Print(LogClass.ServiceAcc, $"[OpenPak] Linking failed: {exception.Message}");
+
+                return false;
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+
+        private async Task LinkFromAccountLockedAsync(CancellationToken cancellationToken)
+        {
+            if (IsLinked || !OpenPakApi.Instance.SignedIn)
+            {
+                return;
+            }
+
+            string idToken = await OpenPakApi.Instance.SwitchLinkTokenAsync(BaasClientId, cancellationToken);
+
+            if (idToken != null)
+            {
+                await LoginAsync(idToken, cancellationToken);
             }
         }
 
@@ -606,7 +662,7 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             try
             {
                 using JsonDocument inbox = await GetAsync(
-                    $"https://{FiveHost}/v2/users/{_userId}/invitations/inbox?invitation_types=friend",
+                    $"https://{FiveHost}/v2/users/{_userId}/invitations/inbox?invitation_types=friend&read=false",
                     cancellationToken);
 
                 if (!inbox.RootElement.TryGetProperty("items", out JsonElement items))
@@ -645,10 +701,29 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 
             _invitations = waiting;
 
+            // The guest's friends module asks for the count, and answers a title's "you have
+            // been invited" badge with it; it marks read through the same door.
+            OpenPakAccount.Instance.NativeInvitationsUnread = waiting.Count;
+            OpenPakAccount.Instance.NativeInvitationsRead ??= ReadNativeAsync;
+
             foreach (OpenPakInvitation invitation in arrived)
             {
                 InvitationArrived?.Invoke(invitation);
             }
+        }
+
+        /// <summary>The guest read some invitations (or all of them): the same dismissal a page does.</summary>
+        private async Task ReadNativeAsync(IReadOnlyList<ulong> ids)
+        {
+            foreach (OpenPakInvitation invitation in _invitations.ToList())
+            {
+                if (ids.Count == 0 || ids.Contains(ulong.Parse(invitation.InvitationId)))
+                {
+                    await DismissInvitationAsync(invitation.InvitationId, CancellationToken.None);
+                }
+            }
+
+            OpenPakAccount.Instance.NativeInvitationsUnread = _invitations.Count;
         }
 
         /// <summary>

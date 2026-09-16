@@ -48,9 +48,16 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
 
             CopyCodeButton.Click += async (_, _) =>
             {
-                if (DataContext is not OpenPakViewModel model ||
-                    !RyujinxApp.IsClipboardAvailable(out IClipboard clipboard))
+                if (DataContext is not OpenPakViewModel model)
                 {
+                    return;
+                }
+
+                if (!RyujinxApp.IsClipboardAvailable(out IClipboard clipboard))
+                {
+                    NotificationHelper.ShowWarning(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
+                        LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_AccountCopyFailed, model.FriendCode));
+
                     return;
                 }
 
@@ -73,7 +80,8 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
                     return;
                 }
 
-                if (await OpenPakLinkView.Show())
+                // The website can usually do this on its own; the link screen is for when it cannot.
+                if (await OpenPakSession.Instance.LinkFromAccountAsync(CancellationToken.None) || await OpenPakLinkView.Show())
                 {
                     NotificationHelper.ShowSuccess(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
                         LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.MenuBar_OpenPak_LinkDone,

@@ -133,8 +133,27 @@ namespace Ryujinx.Ava.Systems.OpenPak
             }
         }
 
-        private static string Read(string directory)
+        /// <summary>The cloud version the save in this directory last matched, or null.</summary>
+        public static string Read(string directory)
             => File.Exists(Marker(directory)) ? File.ReadAllText(Marker(directory)).Trim() : null;
+
+        /// <summary>When anything in the save was last written, or null for an empty one.</summary>
+        public static DateTime? LastWrite(string directory)
+        {
+            DateTime? latest = null;
+
+            foreach (string file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+            {
+                DateTime written = File.GetLastWriteTime(file);
+
+                if (latest == null || written > latest)
+                {
+                    latest = written;
+                }
+            }
+
+            return latest;
+        }
 
         // Beside the `0` slot, not inside it: the guest owns everything inside.
         private static string Marker(string directory)

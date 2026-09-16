@@ -24,6 +24,9 @@ the Diablo II: Resurrected / Battle.net groundwork — are untagged.
   do that first: delete `openpak/` and the config, launch, sign in, start a title, check the
   hosts block, the 1033 cert, and the save toast on exit.
 - Cut `openpak-v0.1.1` (local Linux build first — PRD rule).
+- Native invitation *list* into the guest (22000/22001) needs the `FriendInvitationForViewerImpl`
+  / `FriendInvitationGroupImpl` layouts — not on switchbrew; a friends-NSO capture or a title
+  that reads them is the way in. The count and mark-read are done.
 - Still blocking titles: NAT check (`nncs1`/`nncs2`, UDP), native News delivery (`bcat:*`).
 - D2R: follow the game-server stage in servers/diablo-ii-resurrected/next-session.md — fork
   changes only as the gateway experiments demand.

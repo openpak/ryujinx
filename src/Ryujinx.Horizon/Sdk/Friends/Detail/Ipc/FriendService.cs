@@ -709,12 +709,13 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             return Result.Success;
         }
 
+        // The list (22000) and the detail (22001) stay stubbed: FriendInvitationForViewerImpl and
+        // FriendInvitationGroupImpl have no established layout, and a struct of zeros a title reads
+        // as data is worse than an empty list. The count has a shape, so it is answered.
         [CmifCommand(22010)]
         public Result GetReceivedFriendInvitationCountCache(out int count, Uid userId)
         {
-            count = 0;
-
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            count = OpenPakFriends.Available ? OpenPakAccount.Instance.NativeInvitationsUnread : 0;
 
             return Result.Success;
         }
@@ -1036,9 +1037,15 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30910)]
         public Result ReadFriendInvitation(Uid userId, [Buffer(HipcBufferFlags.In | HipcBufferFlags.Pointer)] ReadOnlySpan<FriendInvitationId> invitationIds)
         {
-            string invitationIdList = string.Join(", ", invitationIds.ToArray());
+            List<ulong> ids = [];
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, invitationIdList });
+            foreach (FriendInvitationId id in invitationIds)
+            {
+                ids.Add(id.Id);
+            }
+
+            // Fire and forget: the mark-read is a network call and this is the game's thread.
+            _ = OpenPakAccount.Instance.NativeInvitationsRead?.Invoke(ids);
 
             return Result.Success;
         }
@@ -1046,7 +1053,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30911)]
         public Result ReadAllFriendInvitations(Uid userId)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            _ = OpenPakAccount.Instance.NativeInvitationsRead?.Invoke([]);
 
             return Result.Success;
         }

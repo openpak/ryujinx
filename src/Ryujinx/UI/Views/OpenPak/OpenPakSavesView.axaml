@@ -29,7 +29,7 @@
                     </DataTemplate>
                 </ComboBox.ItemTemplate>
             </ComboBox>
-            <Button Name="DownloadButton" Content="{ext:Locale Dialog_OpenPak_SavesDownload}" MinWidth="110" IsEnabled="{Binding Ready}" />
+            <!-- The first upload of a title the cloud has never seen; every later one has a row. -->
             <Button Name="UploadButton" Content="{ext:Locale Dialog_OpenPak_SavesUpload}" MinWidth="110" IsEnabled="{Binding Ready}" />
             <Button Name="RefreshButton" Content="{ext:Locale Dialog_OpenPak_Refresh}" MinWidth="110" IsEnabled="{Binding Ready}" />
         </StackPanel>
@@ -46,21 +46,37 @@
         <ListBox Grid.Row="3" ItemsSource="{Binding Saves}" Background="Transparent">
             <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="viewModels:OpenPakSaveModel">
-                    <StackPanel Margin="0,6" Spacing="2">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock Text="{Binding TitleName}" FontWeight="SemiBold" />
-                            <!-- A conflict is the one thing here somebody has to decide about,
-                                 so it is said rather than silently resolved. -->
-                            <Border
-                                IsVisible="{Binding Conflict}"
-                                Background="#66B54141"
-                                CornerRadius="3"
-                                Padding="6,1">
-                                <TextBlock Text="{ext:Locale Dialog_OpenPak_SavesConflict}" FontSize="11" />
-                            </Border>
+                    <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,6">
+                        <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Text="{Binding TitleName}" FontWeight="SemiBold" />
+                                <!-- A conflict is the one thing here somebody has to decide about,
+                                     so it is said rather than silently resolved. -->
+                                <Border
+                                    IsVisible="{Binding Conflict}"
+                                    Background="#66B54141"
+                                    CornerRadius="3"
+                                    Padding="6,1">
+                                    <TextBlock Text="{ext:Locale Dialog_OpenPak_SavesConflict}" FontSize="11" />
+                                </Border>
+                            </StackPanel>
+                            <!-- Both sides, so the choice below is made on dates and not on faith. -->
+                            <TextBlock Text="{Binding Detail}" Opacity="0.7" FontSize="12" />
+                            <TextBlock Text="{Binding LocalDetail}" Opacity="0.7" FontSize="12" />
                         </StackPanel>
-                        <TextBlock Text="{Binding Detail}" Opacity="0.7" FontSize="12" />
-                    </StackPanel>
+                        <Button
+                            Grid.Column="1"
+                            Margin="6,0,0,0"
+                            Click="OnDownload"
+                            IsVisible="{Binding Installed}"
+                            Content="{ext:Locale Dialog_OpenPak_SavesTakeCloud}" />
+                        <Button
+                            Grid.Column="2"
+                            Margin="6,0,0,0"
+                            Click="OnUpload"
+                            IsVisible="{Binding Installed}"
+                            Content="{ext:Locale Dialog_OpenPak_SavesKeepLocal}" />
+                    </Grid>
                 </DataTemplate>
             </ListBox.ItemTemplate>
         </ListBox>

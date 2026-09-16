@@ -173,6 +173,7 @@ namespace Ryujinx.Ava.Systems.Configuration
             OpenPak.ConsoleServer.Value = cff.OpenPakConsoleServer;
             OpenPak.WebsiteUrl.Value = cff.OpenPakWebsiteUrl;
             OpenPak.RedirectGuestDns.Value = cff.OpenPakRedirectGuestDns;
+            OpenPak.Asked.Value = cff.OpenPakAsked;
 
             Debug.EnableGdbStub.Value = shouldLoadFromFile ? cff.EnableGdbStub : Debug.EnableGdbStub.Value; // Get from global config only
             Debug.GdbStubPort.Value = shouldLoadFromFile ? cff.GdbStubPort : Debug.GdbStubPort.Value; // Get from global config only
@@ -557,6 +558,13 @@ namespace Ryujinx.Ava.Systems.Configuration
                     cff.OpenPakConsoleServer = string.Empty;
                     cff.OpenPakWebsiteUrl = OpenPakConfig.DefaultWebsiteUrl;
                     cff.OpenPakRedirectGuestDns = true;
+                }),
+                (75, static cff =>
+                {
+                    // On by default now: the profile, CA and DNS redirect cost nothing until
+                    // somebody signs in, and the first launch asks whether they want to.
+                    cff.OpenPakEnabled = true;
+                    cff.OpenPakAsked = false;
                 })
             );
     }

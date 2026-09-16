@@ -453,8 +453,8 @@ namespace Ryujinx.OpenPak
             }
         }
 
-        /// <summary>Push a save up. Returns null on success, or why not.</summary>
-        public async Task<string> UploadSaveAsync(string platform, string titleId, byte[] data,
+        /// <summary>Push a save up. Failure is null on success, or why not; Version is what the cloud now calls it.</summary>
+        public async Task<(string Failure, string Version)> UploadSaveAsync(string platform, string titleId, byte[] data,
             string baseVersion, string device, CancellationToken cancellationToken)
         {
             try
@@ -475,20 +475,22 @@ namespace Ryujinx.OpenPak
 
                 using HttpResponseMessage response = await Client.SendAsync(request, cancellationToken);
 
-                if (response.IsSuccessStatusCode)
-                {
-                    return null;
-                }
-
                 string text = await response.Content.ReadAsStringAsync(cancellationToken);
 
-                return response.StatusCode == HttpStatusCode.InsufficientStorage
+                if (response.IsSuccessStatusCode)
+                {
+                    using JsonDocument created = JsonDocument.Parse(text);
+
+                    return (null, ((long)Number(created.RootElement, "number")).ToString());
+                }
+
+                return (response.StatusCode == HttpStatusCode.InsufficientStorage
                     ? "The OpenPak allowance is full. Connect your own storage at openpak.org/account/saves."
-                    : $"OpenPak answered {(int)response.StatusCode}: {Trim(text)}";
+                    : $"OpenPak answered {(int)response.StatusCode}: {Trim(text)}", null);
             }
             catch (Exception exception)
             {
-                return exception.Message;
+                return (exception.Message, null);
             }
         }
 

@@ -17,7 +17,7 @@ namespace Ryujinx.Ava.Systems.Configuration
         /// <summary>
         /// The current version of the file format
         /// </summary>
-        public const int CurrentVersion = 74;
+        public const int CurrentVersion = 75;
 
         /// <summary>
         /// Version of the configuration file format
@@ -495,6 +495,11 @@ namespace Ryujinx.Ava.Systems.Configuration
         /// Point the emulated console's DNS at OpenPak, by writing the Atmosphère hosts file
         /// </summary>
         public bool OpenPakRedirectGuestDns { get; set; }
+
+        /// <summary>
+        /// Whether the first-launch sign-in prompt has been shown; it is shown once
+        /// </summary>
+        public bool OpenPakAsked { get; set; }
 
         /// <summary>
         /// Uses Hypervisor over JIT if available

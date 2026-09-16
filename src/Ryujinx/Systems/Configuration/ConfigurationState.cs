@@ -158,6 +158,7 @@ namespace Ryujinx.Ava.Systems.Configuration
                 OpenPakConsoleServer = OpenPak.ConsoleServer,
                 OpenPakWebsiteUrl = OpenPak.WebsiteUrl,
                 OpenPakRedirectGuestDns = OpenPak.RedirectGuestDns,
+                OpenPakAsked = OpenPak.Asked,
                 EnableGdbStub = Debug.EnableGdbStub,
                 GdbStubPort = Debug.GdbStubPort,
                 DebuggerSuspendOnStart = Debug.DebuggerSuspendOnStart,
@@ -235,10 +236,11 @@ namespace Ryujinx.Ava.Systems.Configuration
             Multiplayer.LdnServer.Value = string.Empty;
             // Off by default, and pointed at production when it is turned on: a fresh install
             // reaches nothing until somebody asks it to.
-            OpenPak.Enabled.Value = false;
+            OpenPak.Enabled.Value = true;
             OpenPak.ConsoleServer.Value = string.Empty;
             OpenPak.WebsiteUrl.Value = OpenPakConfig.DefaultWebsiteUrl;
             OpenPak.RedirectGuestDns.Value = true;
+            OpenPak.Asked.Value = false;
             UI.GuiColumns.FavColumn.Value = true;
             UI.GuiColumns.IconColumn.Value = true;
             UI.GuiColumns.AppColumn.Value = true;

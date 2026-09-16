@@ -296,75 +296,14 @@ namespace Ryujinx.Ava.UI.ViewModels
         public string OpenPakWebsiteUrl { get; set; }
         public bool OpenPakRedirectGuestDns { get; set; }
 
-        /// <summary>Whether a CA is on disk, and until when — the one thing that silently blocks everything.</summary>
-        public string OpenPakCertificateStatus { get; private set; } = string.Empty;
-
         /// <summary>
-        /// Push the two addresses into the shared configuration before something in this page
-        /// uses them. Fetching a certificate from the address that was saved last time, rather
-        /// than the one in the box, is a confusing way to fail.
+        /// Push the addresses into the shared configuration before something in this page uses
+        /// them: a sign-in from this page goes to the site in the box, not the one saved last time.
         /// </summary>
         public void ApplyOpenPakAddresses()
         {
             OpenPakConfig.WebsiteUrl = OpenPakWebsiteUrl ?? string.Empty;
             OpenPakConfig.ConsoleServer = OpenPakConsoleServer ?? string.Empty;
-        }
-
-        /// <summary>
-        /// Fetch the OpenPak CA over ordinary public TLS and keep it where the guest's TLS will
-        /// look. This is the one bootstrap that has to come from somewhere already trusted.
-        /// </summary>
-        public async Task<bool> FetchOpenPakCertificateAsync()
-        {
-            byte[] pem = await OpenPakApi.Instance.CertificateAuthorityAsync(CancellationToken.None);
-
-            if (pem == null)
-            {
-                return false;
-            }
-
-            try
-            {
-                // Parsed before it is written: a 404 page saved as ca.pem would turn a clear
-                // failure here into an unexplained handshake failure inside a game later.
-                _ = X509CertificateLoader.LoadCertificate(pem);
-
-                Directory.CreateDirectory(OpenPakConfig.DataDirectory);
-
-                await File.WriteAllBytesAsync(OpenPakConfig.DefaultCaPath, pem);
-
-                // The guest's TLS caches whether a usable server exists, and a missing CA is
-                // exactly what made it decide there was not one.
-                OpenPakConfig.NotifyChanged();
-
-                RefreshOpenPakCertificateStatus();
-
-                return true;
-            }
-            catch (Exception exception)
-            {
-                RyuLogger.Warning?.Print(LogClass.Application,
-                    $"[OpenPak] What {OpenPakConfig.WebsiteUrl} served was not a certificate: {exception.Message}");
-
-                return false;
-            }
-        }
-
-        public void RefreshOpenPakCertificateStatus()
-        {
-            try
-            {
-                OpenPakCertificateStatus = File.Exists(OpenPakConfig.CaPath)
-                    ? LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_SettingsCaInstalled,
-                        X509CertificateLoader.LoadCertificateFromFile(OpenPakConfig.CaPath).NotAfter.ToShortDateString())
-                    : LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SettingsCaMissing];
-            }
-            catch (Exception)
-            {
-                OpenPakCertificateStatus = LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SettingsCaMissing];
-            }
-
-            OnPropertyChanged(nameof(OpenPakCertificateStatus));
         }
 
         public bool EnableFsIntegrityChecks { get; set; }
@@ -854,8 +793,6 @@ namespace Ryujinx.Ava.UI.ViewModels
             OpenPakConsoleServer = config.OpenPak.ConsoleServer;
             OpenPakWebsiteUrl = config.OpenPak.WebsiteUrl;
             OpenPakRedirectGuestDns = config.OpenPak.RedirectGuestDns;
-
-            RefreshOpenPakCertificateStatus();
 
             // Debug
             EnableGdbStub = config.Debug.EnableGdbStub.Value;

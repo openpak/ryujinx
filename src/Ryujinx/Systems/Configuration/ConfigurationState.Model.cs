@@ -788,8 +788,16 @@ namespace Ryujinx.Ava.Systems.Configuration
             /// </summary>
             public ReactiveObject<bool> RedirectGuestDns { get; private set; }
 
+            /// <summary>
+            /// The first-launch sign-in prompt has been answered, one way or the other. Only
+            /// ever set: whoever said "not now" is not asked again unless they open the menu.
+            /// </summary>
+            public ReactiveObject<bool> Asked { get; private set; }
+
             public OpenPakSection()
             {
+                Asked = new ReactiveObject<bool>();
+
                 Enabled = new ReactiveObject<bool>();
                 Enabled.LogChangesToValue(nameof(Enabled));
                 Enabled.Event += (_, e) => OpenPakConfig.Enabled = e.NewValue;

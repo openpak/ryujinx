@@ -10,8 +10,8 @@ using System.Threading;
 namespace Ryujinx.Ava.UI.Views.Settings
 {
     /// <summary>
-    /// Where OpenPak is configured, so that nobody has to set an environment variable or drop a
-    /// certificate into a data directory by hand to get online.
+    /// Where OpenPak is configured. Signing in is the only thing a person has to do here; the
+    /// console address, the CA and the DNS redirect all come from the network profile at launch.
     /// </summary>
     public partial class SettingsOpenPakView : UserControl
     {
@@ -36,31 +36,6 @@ namespace Ryujinx.Ava.UI.Views.Settings
                     source == "fetched"
                         ? Avalonia.Controls.Notifications.NotificationType.Success
                         : Avalonia.Controls.Notifications.NotificationType.Information);
-
-                Refresh();
-            };
-
-            FetchCertificateButton.Click += async (_, _) =>
-            {
-                if (DataContext is not SettingsViewModel model)
-                {
-                    return;
-                }
-
-                // Applied first: the fetch goes to whatever address is in the box right now, not
-                // to whatever was saved the last time somebody pressed OK.
-                model.ApplyOpenPakAddresses();
-
-                bool fetched = await model.FetchOpenPakCertificateAsync();
-
-                NotificationHelper.Show(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
-                    fetched
-                        ? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SettingsCaFetched]
-                        : LocaleManager.Instance.UpdateAndGetDynamicValue(
-                            LocaleKeys.Dialog_OpenPak_SettingsCaFailed, model.OpenPakWebsiteUrl),
-                    fetched
-                        ? Avalonia.Controls.Notifications.NotificationType.Success
-                        : Avalonia.Controls.Notifications.NotificationType.Warning);
 
                 Refresh();
             };
@@ -101,7 +76,7 @@ namespace Ryujinx.Ava.UI.Views.Settings
             AttachedToVisualTree += (_, _) => Refresh();
         }
 
-        /// <summary>Say what is true right now: signed in or not, and whether there is a CA.</summary>
+        /// <summary>Say what is true right now: signed in or not.</summary>
         private void Refresh()
         {
             AccountStatus.Text = OpenPakAccount.Instance.SignedIn
@@ -111,11 +86,6 @@ namespace Ryujinx.Ava.UI.Views.Settings
 
             SignInButton.IsVisible = !OpenPakApi.Instance.SignedIn;
             SignOutButton.IsVisible = OpenPakApi.Instance.SignedIn;
-
-            if (DataContext is SettingsViewModel model)
-            {
-                model.RefreshOpenPakCertificateStatus();
-            }
         }
     }
 }

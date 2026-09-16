@@ -1,6 +1,6 @@
 # Next session — ryujinx
 
-Updated 2026-09-15.
+Updated 2026-09-16.
 
 Upstream Ryujinx (MIT) plus a C# OpenPak client: console-chain sign-in and linking, the
 friend graph, invitations, cloud saves, mods, news, status (OPENPAK.md). Released at
@@ -19,6 +19,10 @@ the Diablo II: Resurrected / Battle.net groundwork — are untagged.
 
 ## Next steps
 
+- Zero-setup pass landed 2026-09-16 (first-run sign-in, sign-in = link, CA/DNS from the profile
+  only, cloud saves on launch/exit). Untested against a live account from a fresh config —
+  do that first: delete `openpak/` and the config, launch, sign in, start a title, check the
+  hosts block, the 1033 cert, and the save toast on exit.
 - Cut `openpak-v0.1.1` (local Linux build first — PRD rule).
 - Still blocking titles: NAT check (`nncs1`/`nncs2`, UDP), native News delivery (`bcat:*`).
 - D2R: follow the game-server stage in servers/diablo-ii-resurrected/next-session.md — fork

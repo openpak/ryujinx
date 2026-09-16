@@ -22,6 +22,7 @@ using Ryujinx.Ava.Common.Models;
 using Ryujinx.Ava.Input;
 using Ryujinx.Ava.Systems;
 using Ryujinx.Ava.Systems.AppLibrary;
+using Ryujinx.Ava.Systems.OpenPak;
 using Ryujinx.Ava.Systems.Configuration;
 using Ryujinx.Ava.UI.Controls;
 using Ryujinx.Ava.UI.Helpers;
@@ -1910,6 +1911,10 @@ namespace Ryujinx.Ava.UI.ViewModels
 #endif
             PreLaunchNotification();
 
+            // The cloud copy comes down before the guest opens the save, and never blocks a launch
+            // for long: one request, and the game starts on the local copy if it fails.
+            await OpenPakSaves.PullAsync(application);
+
             Logger.RestartTime();
 
             RendererHostControl = new RendererHost();
@@ -2013,6 +2018,10 @@ namespace Ryujinx.Ava.UI.ViewModels
             }
 
             IsGameRunning = false;
+
+            // Captured here: HandleRelaunch below clears it. The upload runs on its own and says
+            // what it did in a toast; a game that just closed is not made to wait on the network.
+            _ = OpenPakSaves.PushAsync(_currentApplicationData);
 
             Dispatcher.UIThread.InvokeAsync(async () =>
             {

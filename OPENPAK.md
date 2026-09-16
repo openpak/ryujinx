@@ -49,23 +49,25 @@ Upstream is `upstream` (`git.ryujinx.app`); `origin` is `openpak/ryujinx`.
 
 ## Configuration surface
 
-Settings -> OpenPak, and nothing has to be typed that is already known:
+Nothing to configure. The first launch asks *Sign in to OpenPak?* — sign in once, or *Not now*
+and never be asked again (the OpenPak menu still has Sign in). Everything else happens on its
+own:
 
-- **Connect this emulator to OpenPak** — off is upstream behaviour, offline, with the made-up
-  id_token Ryujinx has always produced.
-- **Website** — where the account lives and sign-in happens. Ordinary public TLS.
-- **Console server** — `host[:port]` of the console-facing edge, which everything a *game* asks
-  for reaches under Nintendo's own hostnames, routed by SNI. Empty means the website's host, which
-  is right for any deployment serving both from one machine.
-- **Certificate** — Fetch pulls the OpenPak CA from the website and pins it. Until there is one,
-  no title can complete a handshake, and the page says so rather than leaving it to be discovered
-  inside a game.
-- **Point the emulated console's DNS at OpenPak** — writes a fenced block in the Atmosphere hosts
-  file on the virtual SD card. Entries outside the block are left alone, and turning it off
-  removes the block and nothing else.
+- the network profile is fetched at launch and pins the console-facing CA it names;
+- the console's DNS is pointed at the profile's address in the Atmosphère hosts file before a
+  game starts;
+- signing in also links the emulated console to the account, with the same credentials, so a
+  title gets a real id_token straight away;
+- a title's cloud save comes down before it starts and goes up when it exits (see below).
 
-`OPENPAK_SERVER`, `OPENPAK_CA` and `OPENPAK_WEBSITE` still override the settings, so the shared
-launchers keep working with no GUI in the loop.
+Settings -> OpenPak keeps: the on/off toggle (off is stock Ryujinx), signed-in-as with Sign in /
+Sign out, the DNS redirect toggle, and an *Advanced* expander with the website address and a
+network refresh, for anyone running their own deployment. `OPENPAK_SERVER`, `OPENPAK_CA` and
+`OPENPAK_WEBSITE` still override everything, so the shared launchers keep working with no GUI
+in the loop.
+
+The account token lives in the OS password store — Keychain, Credential Manager, or libsecret —
+and there is deliberately no file fallback: without a store, sign-in refuses and says why.
 
 ## What the OpenPak menu opens
 
@@ -80,9 +82,6 @@ One window, seven pages, in the order every OpenPak emulator build uses:
 | Mods | The title's catalogue, installed into the folder Manage Mods already reads, each package checked against its published hash |
 | News | The BCAT dataset a title would receive, and a copy of it on disk |
 | Status | Who is online, per title and per network. Public, so it still answers when sign-in is the broken part |
-
-The account token lives in the OS password store — Keychain, Credential Manager, or libsecret —
-and there is deliberately no file fallback: without a store, sign-in refuses and says why.
 
 ## Linking
 
@@ -171,3 +170,21 @@ opt-in envs serve the local gateway experiment loop
 (`servers/diablo-ii-resurrected/next-session.md`): `RYU_BNET_SSL_TRACE=1` logs guest-side
 plaintext for battle.net connections, and `RYU_BNET_DEV_TLS=1` accepts a locally-terminated
 battle.net TLS with a self-signed cert — every other certificate validates exactly as before.
+
+### Nothing to set up (2026-09-16)
+
+Getting online used to be six steps across two windows — enable, fetch a certificate, sign in,
+open the OpenPak window, link the console, sign in again. Now it is one: the first launch shows
+the sign-in dialog, and a sign-in does the console link with the same credentials in the same
+call. The profile fetch was already pinning the CA and writing the hosts file, so the Fetch
+button and the console-server box were asking for things the emulator already knew; they are
+gone, and the website address lives under *Advanced*. OpenPak is on by default (migration 75);
+*Not now* leaves it on but signed out, which is a console with no account: Nintendo-hostname
+titles still reach OpenPak anonymously, and signing in later needs no restart.
+
+Cloud saves stopped being a page you had to visit: the newest cloud copy is downloaded before a
+title starts and the local copy uploaded when it exits, toasting either way. An `openpak-version`
+marker beside the save's `0` slot records which cloud version the local copy last matched, which
+is what tells "the cloud moved on from another machine" (take it, keep the old local copy as
+`0.openpak-backup`) from "both sides have a save and no shared history" (touch nothing, say so —
+the Cloud saves page is where that choice is made). No per-title toggle yet.

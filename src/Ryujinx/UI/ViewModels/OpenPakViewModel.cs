@@ -329,6 +329,8 @@ namespace Ryujinx.Ava.UI.ViewModels
 
                 SaveArchive.Unpack(download.Data, directory);
 
+                OpenPakSaves.Remember(directory, download.Version);
+
                 Message = LocaleManager.Instance.UpdateAndGetDynamicValue(
                     LocaleKeys.Dialog_OpenPak_SavesDownloaded, application.Name);
             });
@@ -357,7 +359,7 @@ namespace Ryujinx.Ava.UI.ViewModels
                 OpenPakSaveModel existing = Saves.FirstOrDefault(save =>
                     save.TitleId.Equals(application.IdString, StringComparison.OrdinalIgnoreCase));
 
-                string failure = await OpenPakApi.Instance.UploadSaveAsync("switch", application.IdString,
+                (string failure, string version) = await OpenPakApi.Instance.UploadSaveAsync("switch", application.IdString,
                     packed, existing?.NewestVersion, Environment.MachineName, _cancellation.Token);
 
                 Message = failure ?? LocaleManager.Instance.UpdateAndGetDynamicValue(
@@ -365,6 +367,8 @@ namespace Ryujinx.Ava.UI.ViewModels
 
                 if (failure == null)
                 {
+                    OpenPakSaves.Remember(directory, version);
+
                     await RefreshSavesAsync();
                 }
             });

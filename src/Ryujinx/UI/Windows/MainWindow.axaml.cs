@@ -595,6 +595,20 @@ namespace Ryujinx.Ava.UI.Windows
                 SetMainContent,
                 this);
 
+            // Asked once, at the first launch, and never again unless somebody opens the menu:
+            // signing in is the only step there is, everything else is fetched or written for
+            // them, so this is the whole onboarding.
+            if (OpenPakConfig.Enabled && !OpenPakApi.Instance.SignedIn && !ConfigurationState.Instance.OpenPak.Asked)
+            {
+                Dispatcher.UIThread.Post(async () =>
+                {
+                    await Views.Dialog.OpenPakSignInView.Show(firstRun: true);
+
+                    ConfigurationState.Instance.OpenPak.Asked.Value = true;
+                    ConfigurationState.Instance.ToFileFormat().SaveConfig(Program.ConfigurationPath);
+                });
+            }
+
             ApplicationLibrary.ApplicationCountUpdated += ApplicationLibrary_ApplicationCountUpdated;
             _appLibraryAppsSubscription?.Dispose();
             _appLibraryAppsSubscription = ApplicationLibrary.Applications

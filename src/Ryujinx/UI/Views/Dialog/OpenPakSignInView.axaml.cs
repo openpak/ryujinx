@@ -43,17 +43,25 @@ namespace Ryujinx.Ava.UI.Views.Dialog
             }
         }
 
-        /// <summary>Shows the dialog and returns whether somebody ended up signed in.</summary>
-        public static async Task<bool> Show()
+        /// <summary>
+        /// Shows the dialog and returns whether somebody ended up signed in. The first-run form is
+        /// the same dialog with a line saying why it appeared and a "Not now" instead of Cancel.
+        /// </summary>
+        public static async Task<bool> Show(bool firstRun = false)
         {
             OpenPakSignInView view = new();
+
+            if (firstRun && SecretStore.Available)
+            {
+                view.Status(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SignInFirstRun]);
+            }
 
             FAContentDialog dialog = new()
             {
                 Title = LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SignInTitle],
                 PrimaryButtonText = string.Empty,
                 SecondaryButtonText = string.Empty,
-                CloseButtonText = LocaleManager.Instance[LocaleKeys.Cancel],
+                CloseButtonText = LocaleManager.Instance[firstRun ? LocaleKeys.Dialog_OpenPak_SignInNotNow : LocaleKeys.Cancel],
                 Content = view,
             };
 

@@ -332,6 +332,39 @@ namespace Ryujinx.OpenPak
                     new OpenPakRequest(f.AccountId, f.DisplayName, true) { Pid = f.Pid, FriendCode = f.FriendCode })]);
         }
 
+        /// <summary>
+        /// The Nintendo-Account id_token the emulated console's device account federates with.
+        /// Signing in here proved the account; this turns that proof into the console link without
+        /// anybody typing the password a second time. Null when the site cannot mint one.
+        /// </summary>
+        public async Task<string> SwitchLinkTokenAsync(string clientId, CancellationToken cancellationToken)
+        {
+            try
+            {
+                using HttpRequestMessage request = Authorised(HttpMethod.Post, $"{BaseUrl}/api/v1/me/switch/link");
+
+                request.Content = new StringContent(Json(writer => writer.WriteString("client_id", clientId)),
+                    Encoding.UTF8, "application/json");
+
+                using HttpResponseMessage response = await Client.SendAsync(request, cancellationToken);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+
+                using JsonDocument document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+
+                return String(document.RootElement, "id_token");
+            }
+            catch (Exception exception)
+            {
+                Logger.Warning?.Print(LogClass.Application, $"[OpenPak] Link token: {exception.Message}");
+
+                return null;
+            }
+        }
+
         /// <summary>request / accept / decline, in the adapter's own terms (pid or friend code).</summary>
         public Task<string> SwitchFriendAsync(string action, ulong pid, string friendCode, CancellationToken cancellationToken)
             => PostAsync("/api/v1/me/switch/friend", Json(writer =>

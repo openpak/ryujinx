@@ -66,6 +66,16 @@ namespace Ryujinx.OpenPak
         /// <summary>The Switch identity the adapter minted for this account, or null.</summary>
         public OpenPakSwitchIdentity Identity { get; private set; }
 
+        /// <summary>
+        /// How many native invitations are waiting, and how to mark some read. Set by the session
+        /// that polls the inbox (which lives a project up); read by the guest's friends module
+        /// (which lives a project down and cannot see the session).
+        /// </summary>
+        public int NativeInvitationsUnread { get; set; }
+
+        /// <summary>Mark these invitation ids read; an empty list means all of them.</summary>
+        public Func<IReadOnlyList<ulong>, Task> NativeInvitationsRead { get; set; }
+
         /// <summary>Whether someone is signed in, whatever the caches hold.</summary>
         public bool SignedIn => OpenPakApi.Instance.SignedIn;
 

@@ -54,7 +54,20 @@ namespace Ryujinx.Ava.UI.Views.Main
             CompatibilityListMenuItem.Command = Commands.Create(() => CompatibilityListWindow.Show());
             LdnGameListMenuItem.Command = Commands.Create(() => LdnGamesListWindow.Show());
 
-            OpenPakAccountMenuItem.Command = Commands.Create(() => OpenPakWindow.Show(OpenPakWindow.Page.Account));
+            OpenPakAccountMenuItem.Command = Commands.Create(async () =>
+            {
+                // Signed out, the only thing the account page offers is the sign-in button.
+                if (!OpenPakApi.Instance.SignedIn)
+                {
+                    await Views.Dialog.OpenPakSignInView.Show();
+
+                    RefreshOpenPakStatus();
+
+                    return;
+                }
+
+                await OpenPakWindow.Show(OpenPakWindow.Page.Account);
+            });
             OpenPakFriendsMenuItem.Command = Commands.Create(() => OpenPakWindow.Show(OpenPakWindow.Page.Friends));
             OpenPakInvitationsMenuItem.Command = Commands.Create(() => OpenPakWindow.Show(OpenPakWindow.Page.Invitations));
             OpenPakSavesMenuItem.Command = Commands.Create(() => OpenPakWindow.Show(OpenPakWindow.Page.Saves));

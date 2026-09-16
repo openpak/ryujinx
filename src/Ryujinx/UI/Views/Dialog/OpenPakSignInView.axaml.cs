@@ -43,10 +43,11 @@ namespace Ryujinx.Ava.UI.Views.Dialog
             if (!SecretStore.Available)
             {
                 // Said before anything is typed: there is no point filling in a password that
-                // cannot be turned into a token this machine is able to keep.
+                // cannot be turned into a token this machine is able to keep. The reason names
+                // the package to install on this platform.
                 SignInButton.IsEnabled = false;
 
-                Status(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SignInNoKeychain]);
+                Status(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SignInNoKeychain] + "\n\n" + SecretStore.UnavailableReason);
             }
         }
 
@@ -104,30 +105,13 @@ namespace Ryujinx.Ava.UI.Views.Dialog
             // after signing in already has a list to be handed.
             OpenPakAccount.Instance.Start();
 
-            // Binding the console is the same credential typed once more, so it happens here and
-            // now instead of asking for them again on the account page's link screen. A person
-            // who signs in and then launches a game expects the game to know who they are; the
-            // distinction between the account and the console's device identity is console
-            // architecture, not something to make anybody manage. Nothing is stored: the
-            // password is used for this one federation call and let go, exactly as above.
-            //
-            // Anything that fails here leaves linking to the account page's link screen, which
-            // stays for the not-signed-in-yet case.
+            // Binding the console follows from the sign-in: the website mints the token the
+            // console's link page would have produced, so nothing is typed twice. A failure here
+            // leaves the account page's link screen as the fallback.
+            bool linked = await Ryujinx.HLE.HOS.Services.Account.OpenPak.OpenPakSession.Instance.LinkFromAccountAsync(
+                CancellationToken.None);
+
             string email = EmailBox.Text ?? string.Empty;
-            string password = PasswordBox.Text ?? string.Empty;
-
-            bool linked = false;
-
-            try
-            {
-                linked = await Ryujinx.HLE.HOS.Services.Account.OpenPak.OpenPakSession.Instance.LinkAsync(
-                    email, password, CancellationToken.None);
-            }
-            catch (Exception exception)
-            {
-                Logger.Warning?.Print(LogClass.ServiceAcc,
-                    $"[OpenPak] Linking the console during sign-in failed: {exception.Message}");
-            }
 
             _signedIn = true;
 

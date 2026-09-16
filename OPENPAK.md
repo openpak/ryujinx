@@ -56,8 +56,10 @@ own:
 - the network profile is fetched at launch and pins the console-facing CA it names;
 - the console's DNS is pointed at the profile's address in the Atmosphère hosts file before a
   game starts;
-- signing in also links the emulated console to the account, with the same credentials, so a
-  title gets a real id_token straight away;
+- signing in also links the emulated console to the account: the website mints the token the
+  console's link page would have (`POST /api/v1/me/switch/link`), so a title gets a real id_token
+  straight away and the password is never typed twice — and an install whose device account was
+  lost relinks on the next launch by itself;
 - a title's cloud save comes down before it starts and goes up when it exits (see below).
 
 Settings -> OpenPak keeps: the on/off toggle (off is stock Ryujinx), signed-in-as with Sign in /
@@ -188,3 +190,27 @@ marker beside the save's `0` slot records which cloud version the local copy las
 is what tells "the cloud moved on from another machine" (take it, keep the old local copy as
 `0.openpak-backup`) from "both sides have a save and no shared history" (touch nothing, say so —
 the Cloud saves page is where that choice is made). No per-title toggle yet.
+
+### Dialog pass (2026-09-16, later)
+
+Opening the OpenPak window at any page loaded nothing: the refresh ran after the modal `ShowAsync`
+returned, on a disposed view model. It runs on `Opened` now. The Account page never showed the
+player count because `Guarded` dropped a second call while one ran; it queues. Enter submits the
+sign-in form, Play on an invitation closes the window before launching, the console panel redraws
+after sign-in/out, the clipboard says when it is not there, and the menu's account entry opens
+the sign-in dialog when signed out instead of a page with one button on it.
+
+Cloud saves page: every row now shows both sides — the cloud version with its device and date, and
+the local copy's last write and which version it was last in step with — and offers *Take cloud*
+/ *Keep local* per row. The top bar keeps only the first-upload path for a title the cloud has
+never seen.
+
+Native invitations reach the guest as far as their shape is known: `GetReceivedFriendInvitationCountCache`
+(22010) answers the unread count from the `five` inbox, and `ReadFriendInvitation` /
+`ReadAllFriendInvitations` (30910/30911) mark read through the same PATCH the page uses. The list
+and detail (22000/22001) stay stubbed on purpose: `FriendInvitationForViewerImpl` and
+`FriendInvitationGroupImpl` have no established layout (switchbrew documents only the 8-byte ids
+and the 0xC00 game-mode description), and a struct of zeros a title reads as data is worse than
+an empty list. The inbox is asked with `read=false`, so a dismissal survives a restart without a
+local list.
+

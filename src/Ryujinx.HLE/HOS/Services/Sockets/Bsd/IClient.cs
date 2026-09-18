@@ -1,11 +1,13 @@
 using Ryujinx.Common;
 using Ryujinx.Common.Logging;
+using Ryujinx.Common.Utilities;
 using Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl;
 using Ryujinx.HLE.HOS.Services.Sockets.Bsd.Types;
 using Ryujinx.Memory;
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -670,18 +672,46 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
         // Sysctl(buffer<unknown, 0x21, 0>, buffer<unknown, 0x21, 0>) -> (i32 ret, u32 bsd_errno, u32, buffer<unknown, 0x22, 0>)
         public ResultCode Sysctl(ServiceCtx context)
         {
-            WriteBsdResult(context, -1, LinuxError.EOPNOTSUPP);
-
-            // Which query is refused decides what to implement: Dinkum's NPLN WebRTC asks every
-            // 2 s while a friend joins, and never gathers a connection candidate (2026-09-18).
             (ulong mibPosition, ulong mibSize) = context.Request.GetBufferType0x21(0);
             (_, ulong newSize) = context.Request.GetBufferType0x21(1);
-            (_, ulong oldSize) = context.Request.GetBufferType0x22(0);
+            (ulong oldPosition, ulong oldSize) = context.Request.GetBufferType0x22(0);
             int[] mib = new int[Math.Min(mibSize / 4, 16)];
             for (int i = 0; i < mib.Length; i++)
             {
                 mib[i] = context.Memory.Read<int>(mibPosition + (ulong)i * 4);
             }
+
+            // getifaddrs(): NPLN's WebRTC gathers connection candidates from it (InterfaceList).
+            if (InterfaceList.Matches(mib) && newSize == 0)
+            {
+                (_, UnicastIPAddressInformation local) = NetworkHelpers.GetLocalInterface(context.Device.Configuration.MultiplayerLanInterfaceId);
+
+                if (local != null)
+                {
+                    byte[] list = InterfaceList.Build(local.Address, local.IPv4Mask);
+
+                    // No buffer is the size probe; a short buffer is ENOMEM, as on FreeBSD.
+                    if (oldSize != 0 && oldSize < (ulong)list.Length)
+                    {
+                        WriteBsdResult(context, -1, LinuxError.ENOMEM);
+                        context.ResponseData.Write(list.Length);
+
+                        return ResultCode.Success;
+                    }
+
+                    if (oldSize != 0)
+                    {
+                        context.Memory.Write(oldPosition, list);
+                    }
+
+                    WriteBsdResult(context, 0);
+                    context.ResponseData.Write(list.Length);
+
+                    return ResultCode.Success;
+                }
+            }
+
+            WriteBsdResult(context, -1, LinuxError.EOPNOTSUPP);
 
             Logger.Stub?.PrintStub(LogClass.ServiceBsd, $"mib=[{string.Join(",", mib)}] old={oldSize} new={newSize}");
 

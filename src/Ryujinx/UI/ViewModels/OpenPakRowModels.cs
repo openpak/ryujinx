@@ -35,6 +35,11 @@ namespace Ryujinx.Ava.UI.ViewModels
         public bool Online { get; }
         public string Status { get; }
 
+        /// <summary>Stands in for an avatar, which the friend list does not carry.</summary>
+        public string Initial => string.IsNullOrEmpty(DisplayName)
+            ? "?"
+            : System.Globalization.StringInfo.GetNextTextElement(DisplayName).ToUpperInvariant();
+
         /// <summary>The presence dot. Green reads as "there", and grey as "not", at a glance.</summary>
         public IBrush PresenceBrush => Online
             ? new SolidColorBrush(Color.FromRgb(0x3F, 0xB9, 0x50))

@@ -13,14 +13,20 @@
         <viewModels:OpenPakViewModel />
     </Design.DataContext>
     <Grid Margin="20" RowDefinitions="Auto,Auto,Auto,*">
+        <!-- The same on every page: what this is on the left, fetch it again on the right. -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,16">
+            <TextBlock Grid.Column="0" Classes="page" Text="{ext:Locale Dialog_OpenPak_PageSaves}" />
+            <Button Grid.Column="1" Name="RefreshButton" Content="{ext:Locale Dialog_OpenPak_Refresh}" MinWidth="90" IsEnabled="{Binding Ready}" />
+        </Grid>
 
         <!-- Upload and download are about the title you pick, not about the row you clicked:
              the cloud may hold a save for a title, and the console may hold one, and they are
              two different questions. -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" Margin="0,0,0,12">
+        <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="10" Margin="0,0,0,12">
             <ComboBox
+                Grid.Column="0"
                 Name="TitleBox"
-                Width="320"
+                HorizontalAlignment="Stretch"
                 ItemsSource="{Binding Titles}"
                 SelectedItem="{Binding SelectedTitle}">
                 <ComboBox.ItemTemplate>
@@ -30,55 +36,40 @@
                 </ComboBox.ItemTemplate>
             </ComboBox>
             <!-- The first upload of a title the cloud has never seen; every later one has a row. -->
-            <Button Name="UploadButton" Content="{ext:Locale Dialog_OpenPak_SavesUpload}" MinWidth="110" IsEnabled="{Binding Ready}" />
-            <Button Name="RefreshButton" Content="{ext:Locale Dialog_OpenPak_Refresh}" MinWidth="110" IsEnabled="{Binding Ready}" />
+            <Button Grid.Column="1" Name="UploadButton" Content="{ext:Locale Dialog_OpenPak_SavesUpload}" MinWidth="90" IsEnabled="{Binding Ready}" />
+        </Grid>
+
+        <StackPanel Grid.Row="2" Margin="0,0,0,12">
+            <TextBlock Classes="sub" Text="{Binding UsageText}" IsVisible="{Binding SignedIn}" />
+            <TextBlock Classes="sub" Text="{ext:Locale Dialog_OpenPak_SavesEmpty}" IsVisible="{Binding SavesEmpty}" />
         </StackPanel>
 
-        <TextBlock Grid.Row="1" Text="{Binding UsageText}" Opacity="0.8" Margin="4,0,0,12" IsVisible="{Binding SignedIn}" />
-
-        <TextBlock
-            Grid.Row="2"
-            Text="{ext:Locale Dialog_OpenPak_SavesEmpty}"
-            IsVisible="{Binding SavesEmpty}"
-            Opacity="0.7"
-            Margin="4,0,0,12" />
-
-        <ListBox Grid.Row="3" ItemsSource="{Binding Saves}" Background="Transparent">
-            <ListBox.ItemTemplate>
-                <DataTemplate x:DataType="viewModels:OpenPakSaveModel">
-                    <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,6">
-                        <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <TextBlock Text="{Binding TitleName}" FontWeight="SemiBold" />
-                                <!-- A conflict is the one thing here somebody has to decide about,
-                                     so it is said rather than silently resolved. -->
-                                <Border
-                                    IsVisible="{Binding Conflict}"
-                                    Background="#66B54141"
-                                    CornerRadius="3"
-                                    Padding="6,1">
-                                    <TextBlock Text="{ext:Locale Dialog_OpenPak_SavesConflict}" FontSize="11" />
-                                </Border>
-                            </StackPanel>
-                            <!-- Both sides, so the choice below is made on dates and not on faith. -->
-                            <TextBlock Text="{Binding Detail}" Opacity="0.7" FontSize="12" />
-                            <TextBlock Text="{Binding LocalDetail}" Opacity="0.7" FontSize="12" />
-                        </StackPanel>
-                        <Button
-                            Grid.Column="1"
-                            Margin="6,0,0,0"
-                            Click="OnDownload"
-                            IsVisible="{Binding Installed}"
-                            Content="{ext:Locale Dialog_OpenPak_SavesTakeCloud}" />
-                        <Button
-                            Grid.Column="2"
-                            Margin="6,0,0,0"
-                            Click="OnUpload"
-                            IsVisible="{Binding Installed}"
-                            Content="{ext:Locale Dialog_OpenPak_SavesKeepLocal}" />
-                    </Grid>
-                </DataTemplate>
-            </ListBox.ItemTemplate>
-        </ListBox>
+        <ScrollViewer Grid.Row="3" HorizontalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding Saves}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="viewModels:OpenPakSaveModel">
+                        <Border Classes="settings row">
+                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Classes="title" Text="{Binding TitleName}" />
+                                        <!-- A conflict is the one thing here somebody has to decide about,
+                                             so it is said rather than silently resolved. -->
+                                        <Border IsVisible="{Binding Conflict}" Background="#66B54141" CornerRadius="3" Padding="6,1">
+                                            <TextBlock Text="{ext:Locale Dialog_OpenPak_SavesConflict}" FontSize="11" />
+                                        </Border>
+                                    </StackPanel>
+                                    <!-- Both sides, so the choice below is made on dates and not on faith. -->
+                                    <TextBlock Classes="sub" Text="{Binding Detail}" />
+                                    <TextBlock Classes="sub" Text="{Binding LocalDetail}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Click="OnDownload" IsVisible="{Binding Installed}" Content="{ext:Locale Dialog_OpenPak_SavesTakeCloud}" />
+                                <Button Grid.Column="2" Click="OnUpload" IsVisible="{Binding Installed}" Content="{ext:Locale Dialog_OpenPak_SavesKeepLocal}" />
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
     </Grid>
 </UserControl>

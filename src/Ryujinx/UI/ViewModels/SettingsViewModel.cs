@@ -296,6 +296,11 @@ namespace Ryujinx.Ava.UI.ViewModels
         public string OpenPakWebsiteUrl { get; set; }
         public bool OpenPakRedirectGuestDns { get; set; }
 
+        /// <summary>The startup choices as shown: last used, ask, then every profile by name.</summary>
+        public List<string> OpenPakStartupLabels { get; } = [];
+        private readonly List<string> _openPakStartupValues = [];
+        public int OpenPakStartupIndex { get; set; }
+
         /// <summary>
         /// Push the addresses into the shared configuration before something in this page uses
         /// them: a sign-in from this page goes to the site in the box, not the one saved last time.
@@ -794,6 +799,23 @@ namespace Ryujinx.Ava.UI.ViewModels
             OpenPakWebsiteUrl = config.OpenPak.WebsiteUrl;
             OpenPakRedirectGuestDns = config.OpenPak.RedirectGuestDns;
 
+            OpenPakStartupLabels.Clear();
+            _openPakStartupValues.Clear();
+            OpenPakStartupLabels.Add(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SettingsStartupLastUsed]);
+            _openPakStartupValues.Add(string.Empty);
+            OpenPakStartupLabels.Add(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SettingsStartupAsk]);
+            _openPakStartupValues.Add(ConfigurationState.OpenPakSection.StartupAsk);
+
+            foreach (HLE.HOS.Services.Account.Acc.UserProfile profile in
+                (RyujinxApp.MainWindow?.AccountManager?.GetAllUsers() ?? []).OrderBy(profile => profile.Name))
+            {
+                OpenPakStartupLabels.Add(profile.Name);
+                _openPakStartupValues.Add(profile.UserId.ToString());
+            }
+
+            // A profile named here and deleted since reads as the default, which is what launch does.
+            OpenPakStartupIndex = Math.Max(0, _openPakStartupValues.IndexOf(config.OpenPak.StartupProfile.Value ?? string.Empty));
+
             // Debug
             EnableGdbStub = config.Debug.EnableGdbStub.Value;
             GDBStubPort = config.Debug.GdbStubPort.Value;
@@ -927,6 +949,7 @@ namespace Ryujinx.Ava.UI.ViewModels
             config.OpenPak.ConsoleServer.Value = OpenPakConsoleServer ?? string.Empty;
             config.OpenPak.WebsiteUrl.Value = OpenPakWebsiteUrl ?? string.Empty;
             config.OpenPak.RedirectGuestDns.Value = OpenPakRedirectGuestDns;
+            config.OpenPak.StartupProfile.Value = _openPakStartupValues.ElementAtOrDefault(OpenPakStartupIndex) ?? string.Empty;
 
             // Debug
             config.Debug.EnableGdbStub.Value = EnableGdbStub;

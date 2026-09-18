@@ -49,9 +49,9 @@ Upstream is `upstream` (`git.ryujinx.app`); `origin` is `openpak/ryujinx`.
 
 ## Configuration surface
 
-Nothing to configure. The first launch asks *Sign in to OpenPak?* — sign in once, or *Not now*
-and never be asked again (the OpenPak menu still has Sign in). Everything else happens on its
-own:
+Nothing to configure. The first launch sets up the open profile — *Sign in with OpenPak*,
+*Create an account* (the website's register page, then sign in), or *Play offline* — and never
+asks again (the OpenPak menu still has Sign in). Everything else happens on its own:
 
 - the network profile is fetched at launch and pins the console-facing CA it names;
 - the console's DNS is pointed at the profile's address in the Atmosphère hosts file before a
@@ -63,13 +63,35 @@ own:
 - a title's cloud save comes down before it starts and goes up when it exits (see below).
 
 Settings -> OpenPak keeps: the on/off toggle (off is stock Ryujinx), signed-in-as with Sign in /
-Sign out, the DNS redirect toggle, and an *Advanced* expander with the website address and a
+Sign out, *Account at startup*, the DNS redirect toggle, and an *Advanced* expander with the website address and a
 network refresh, for anyone running their own deployment. `OPENPAK_SERVER`, `OPENPAK_CA` and
 `OPENPAK_WEBSITE` still override everything, so the shared launchers keep working with no GUI
 in the loop.
 
 The account token lives in the OS password store — Keychain, Credential Manager, or libsecret —
 and there is deliberately no file fallback: without a store, sign-in refuses and says why.
+
+## Profiles
+
+Each Ryujinx profile is its own OpenPak account, and one is active at a time — a console with
+one user signed in. The design is `emulators/prds/emulator-integration-prd.md` §3.1; here:
+
+- the bearer is kept per site and profile (`{site}/{profileId}` in the password store), the
+  device account per server and profile (`openpak/device-{server}-{profileId}.json`), and
+  `openpak/profiles.json` records which account each profile is linked to — for the badges on the
+  profile tiles and for refusing a second profile on the same account;
+- switching profile takes the old account offline at once, drops everything cached for it, and
+  signs the new one in; deleting a profile revokes its bearer and forgets its device account;
+- at launch, more than one profile follows *Account at startup*: last used (default), ask, or a
+  named profile. The picker's *Add account* runs the same setup as the first launch, for a new
+  profile. A game started from a launcher or `--profile` never sees a picker;
+- the guest only ever gets the active profile's identity: `acc:u0` and `friend:u` answer any other
+  profile as offline, `TrySelectUserWithoutInteraction` picks the active profile rather than the
+  first, and a title's own profile picker is skipped by default (System -> *Skip user profiles
+  manager*, which is how to get it back);
+- signing in from the setup copies the account's name and avatar into the profile once;
+- an install from before profiles hands its bearer and device account to the profile open at the
+  first launch since, so nobody is signed out by the upgrade.
 
 ## What the OpenPak menu opens
 

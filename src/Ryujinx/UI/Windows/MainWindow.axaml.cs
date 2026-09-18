@@ -16,6 +16,7 @@ using Ryujinx.Ava.Systems.AppLibrary;
 using Ryujinx.Ava.Systems.Configuration;
 using Ryujinx.Ava.Systems.Configuration.UI;
 using Ryujinx.Ava.UI.Applet;
+using Ryujinx.Ava.UI.Controls;
 using Ryujinx.Ava.UI.Helpers;
 using Ryujinx.Ava.UI.Models;
 using Ryujinx.Ava.UI.ViewModels;
@@ -459,7 +460,7 @@ namespace Ryujinx.Ava.UI.Windows
             // new build. It is off with the integration, and it never waits for anything.
             if (OpenPakConfig.Enabled)
             {
-                _ = Task.Run(async () =>
+                _networkProfileRefresh = Task.Run(async () =>
                 {
                     try
                     {
@@ -470,17 +471,103 @@ namespace Ryujinx.Ava.UI.Windows
                         // A profile that cannot be fetched is a log line inside RefreshAsync and
                         // a game that starts anyway.
                     }
-
-                    // Sign in now rather than when somebody opens the OpenPak window: being online
-                    // is the point of the integration, and until this runs the account is offline,
-                    // invisible to friends, and hears about no invitation. It is the same call the
-                    // Account page makes, and it fails as quietly.
-                    await OpenPakSession.Instance.EnsureAsync(CancellationToken.None);
-
-                    // The account cache keeps friends and presence warm on its own timer once it
-                    // is started, and starting it is all the OpenPak window's Refresh did.
-                    OpenPakAccount.Instance.Start();
                 });
+            }
+        }
+
+        private Task _networkProfileRefresh = Task.CompletedTask;
+
+        /// <summary>
+        /// Which profile, then set it up if nobody has yet, then online. In that order because the
+        /// identity is the profile's: signing in before the profile is settled would put the last
+        /// used profile online only to take it off again a moment later.
+        /// </summary>
+        private async Task StartOpenPakAsync()
+        {
+            if (!OpenPakConfig.Enabled)
+            {
+                return;
+            }
+
+            // A launcher or shortcut starting a game, or --profile, has already said who is
+            // playing; nothing is asked that would stand between it and the game.
+            bool interactive = !_deferLoad && CommandLineState.Profile == null;
+
+            if (interactive)
+            {
+                await ChooseStartupProfileAsync();
+            }
+
+            // Set up on the first plain launch, never over a game that is starting.
+            if (interactive && !ConfigurationState.Instance.OpenPak.Asked && !OpenPakApi.Instance.SignedIn)
+            {
+                await Views.Dialog.OpenPakSetup.RunAsync(AccountManager, addAccount: false);
+
+                ConfigurationState.Instance.OpenPak.Asked.Value = true;
+                ConfigurationState.Instance.ToFileFormat().SaveConfig(Program.ConfigurationPath);
+            }
+
+            await _networkProfileRefresh;
+
+            // Sign in now rather than when somebody opens the OpenPak window: being online is the
+            // point of the integration, and until this runs the account is offline, invisible to
+            // friends, and hears about no invitation. It fails as quietly as the Account page.
+            await Task.Run(() => OpenPakSession.Instance.EnsureAsync(CancellationToken.None));
+
+            // The account cache keeps friends and presence warm on its own timer once started.
+            OpenPakAccount.Instance.Start();
+
+            // A profile that was signed in and has lost its bearer — revoked from the website, or
+            // a password store that forgot it — says so, instead of quietly playing offline.
+            if (!OpenPakApi.Instance.SignedIn && OpenPakLinks.Get(OpenPakConfig.ProfileId) != null)
+            {
+                NotificationHelper.ShowWarning(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
+                    LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_SignInAgain, OpenPakConfig.ProfileName));
+            }
+        }
+
+        /// <summary>
+        /// One profile is simply used. More than one follows the startup setting: the last used
+        /// (upstream's behaviour, and the default), a named profile, or the picker.
+        /// </summary>
+        private async Task ChooseStartupProfileAsync()
+        {
+            List<HLE.HOS.Services.Account.Acc.UserProfile> profiles = [.. AccountManager.GetAllUsers()];
+
+            if (profiles.Count < 2)
+            {
+                return;
+            }
+
+            string startup = ConfigurationState.Instance.OpenPak.StartupProfile.Value ?? string.Empty;
+
+            if (startup != ConfigurationState.OpenPakSection.StartupAsk)
+            {
+                if (profiles.FirstOrDefault(profile => profile.UserId.ToString() == startup) is { } named)
+                {
+                    AccountManager.OpenUser(named.UserId);
+                }
+
+                return;
+            }
+
+            NavigationDialogHost owner = new();
+
+            ProfileSelectorDialogViewModel picker = new()
+            {
+                Profiles = [.. profiles.OrderBy(profile => profile.Name).Select(profile => new Models.UserProfile(profile, owner))],
+                SelectedUserId = AccountManager.LastOpenedUser.UserId,
+            };
+
+            (HLE.HOS.Services.Account.Acc.UserId chosen, bool addAccount) = await ProfileSelectorDialog.ShowStartupDialog(picker);
+
+            if (addAccount)
+            {
+                await Views.Dialog.OpenPakSetup.RunAsync(AccountManager, addAccount: true);
+            }
+            else if (!chosen.IsNull)
+            {
+                AccountManager.OpenUser(chosen);
             }
         }
 
@@ -595,19 +682,8 @@ namespace Ryujinx.Ava.UI.Windows
                 SetMainContent,
                 this);
 
-            // Asked once, at the first launch, and never again unless somebody opens the menu:
-            // signing in is the only step there is, everything else is fetched or written for
-            // them, so this is the whole onboarding.
-            if (OpenPakConfig.Enabled && !OpenPakApi.Instance.SignedIn && !ConfigurationState.Instance.OpenPak.Asked)
-            {
-                Dispatcher.UIThread.Post(async () =>
-                {
-                    await Views.Dialog.OpenPakSignInView.Show(firstRun: true);
-
-                    ConfigurationState.Instance.OpenPak.Asked.Value = true;
-                    ConfigurationState.Instance.ToFileFormat().SaveConfig(Program.ConfigurationPath);
-                });
-            }
+            // The profile is picked and, the first time, set up before anything goes online.
+            Dispatcher.UIThread.Post(() => _ = StartOpenPakAsync());
 
             ApplicationLibrary.ApplicationCountUpdated += ApplicationLibrary_ApplicationCountUpdated;
             _appLibraryAppsSubscription?.Dispose();

@@ -794,9 +794,18 @@ namespace Ryujinx.Ava.Systems.Configuration
             /// </summary>
             public ReactiveObject<bool> Asked { get; private set; }
 
+            /// <summary>
+            /// Which profile opens at launch when there is more than one: empty for the last used,
+            /// <see cref="StartupAsk"/> for the picker, or a profile's UserId.
+            /// </summary>
+            public ReactiveObject<string> StartupProfile { get; private set; }
+
+            public const string StartupAsk = "ask";
+
             public OpenPakSection()
             {
                 Asked = new ReactiveObject<bool>();
+                StartupProfile = new ReactiveObject<string>();
 
                 Enabled = new ReactiveObject<bool>();
                 Enabled.LogChangesToValue(nameof(Enabled));

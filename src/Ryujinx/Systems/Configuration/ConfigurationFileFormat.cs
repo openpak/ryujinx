@@ -17,7 +17,7 @@ namespace Ryujinx.Ava.Systems.Configuration
         /// <summary>
         /// The current version of the file format
         /// </summary>
-        public const int CurrentVersion = 75;
+        public const int CurrentVersion = 76;
 
         /// <summary>
         /// Version of the configuration file format
@@ -500,6 +500,12 @@ namespace Ryujinx.Ava.Systems.Configuration
         /// Whether the first-launch sign-in prompt has been shown; it is shown once
         /// </summary>
         public bool OpenPakAsked { get; set; }
+
+        /// <summary>
+        /// Which profile opens at launch when there is more than one: empty for the last used,
+        /// "ask" for the picker, or a profile's UserId
+        /// </summary>
+        public string OpenPakStartupProfile { get; set; }
 
         /// <summary>
         /// Uses Hypervisor over JIT if available

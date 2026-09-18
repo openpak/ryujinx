@@ -509,7 +509,7 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
             {
                 if (exception.SocketErrorCode != SocketError.WouldBlock)
                 {
-                    Logger.Warning?.Print(LogClass.ServiceBsd, $"Socket Exception: {exception}");
+                    Logger.Warning?.Print(LogClass.ServiceBsd, $"SetSockOpt Option: {option} Level: {level} failed: {exception}");
                 }
 
                 return WinSockHelper.ConvertError((WsaError)exception.ErrorCode);

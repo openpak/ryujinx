@@ -34,15 +34,15 @@ namespace Ryujinx.OpenPak
 
         private OpenPakAccount()
         {
+            // Stopped either way: a change of profile is a change of account while signed in,
+            // and nothing cached for the last one may be shown as the next one's.
             OpenPakApi.Instance.SignedInChanged += () =>
             {
+                Stop();
+
                 if (OpenPakApi.Instance.SignedIn)
                 {
                     Start();
-                }
-                else
-                {
-                    Stop();
                 }
             };
         }
@@ -208,7 +208,16 @@ namespace Ryujinx.OpenPak
             {
                 OpenPakApi api = OpenPakApi.Instance;
 
+                string profileId = OpenPakConfig.ProfileId;
+
                 Profile = await api.MeAsync(cancellationToken) ?? Profile;
+
+                // Kept current here rather than only at sign-in: a bearer carried over from before
+                // profiles arrives with no link written, and a renamed account should read right.
+                if (Profile?.AccountId != null && profileId == OpenPakConfig.ProfileId)
+                {
+                    OpenPakLinks.Set(OpenPakConfig.ProfileId, Profile.AccountId, Profile.DisplayName, OpenPakConfig.ProfileName);
+                }
 
                 OpenPakSwitchIdentity identity = await api.SwitchIdentityAsync(cancellationToken);
 

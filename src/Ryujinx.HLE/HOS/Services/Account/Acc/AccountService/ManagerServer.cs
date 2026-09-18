@@ -4,6 +4,7 @@ using Ryujinx.Common.Logging;
 using Ryujinx.HLE.HOS.Kernel.Threading;
 using Ryujinx.HLE.HOS.Services.Account.Acc.AsyncContext;
 using Ryujinx.HLE.HOS.Services.Account.OpenPak;
+using Ryujinx.OpenPak;
 using System;
 using System.Collections.Generic;
 using System.Security.Claims;
@@ -20,22 +21,28 @@ namespace Ryujinx.HLE.HOS.Services.Account.Acc.AccountService
         private const long OfflineNetworkServiceAccountId = 0xcafe;
 
         /// <summary>
-        /// The BAAS user id OpenPak issued this install, or the offline placeholder when the
-        /// emulator is not signed in to anything.
+        /// The BAAS user id OpenPak issued the active profile, or the offline placeholder when the
+        /// emulator is not signed in to anything or this is another profile.
         /// </summary>
-        private static long NetworkServiceAccountId
+        private long NetworkServiceAccountId
         {
             get
             {
-                ulong openPak = OpenPakSession.Instance.NetworkServiceAccountId;
+                ulong openPak = IsActiveProfile ? OpenPakSession.Instance.NetworkServiceAccountId : 0;
 
                 return openPak != 0 ? (long)openPak : OfflineNetworkServiceAccountId;
             }
         }
 
-#pragma warning disable IDE0052 // Remove unread private member
         private readonly UserId _userId;
-#pragma warning restore IDE0052
+
+        /// <summary>
+        /// The OpenPak session speaks for the active profile only. Any other profile a title asks
+        /// about — a second local player — is offline, never handed the active one's identity.
+        /// </summary>
+        private bool IsActiveProfile => _userId.ToString() == OpenPakConfig.ProfileId;
+
+        private string OpenPakIdToken => IsActiveProfile ? OpenPakSession.Instance.IdToken : null;
 
         private byte[] _cachedTokenData;
         private DateTime _cachedTokenExpiry;
@@ -139,7 +146,10 @@ namespace Ryujinx.HLE.HOS.Services.Account.Acc.AccountService
 
             // This is the call the guest makes before reading the cache, which makes it the one
             // place a slow network round trip belongs. LoadIdTokenCache below is synchronous.
-            await OpenPakSession.Instance.EnsureAsync(token);
+            if (IsActiveProfile)
+            {
+                await OpenPakSession.Instance.EnsureAsync(token);
+            }
         }
 
         public ResultCode LoadIdTokenCache(ServiceCtx context)
@@ -163,7 +173,7 @@ namespace Ryujinx.HLE.HOS.Services.Account.Acc.AccountService
             }
             */
 
-            string openPakToken = OpenPakSession.Instance.IdToken;
+            string openPakToken = OpenPakIdToken;
 
             if (openPakToken != null)
             {
@@ -232,7 +242,7 @@ namespace Ryujinx.HLE.HOS.Services.Account.Acc.AccountService
         /// has a session, the locally-generated offline one when not.</summary>
         public string SessionIdToken()
         {
-            string openPakToken = OpenPakSession.Instance.IdToken;
+            string openPakToken = OpenPakIdToken;
 
             return openPakToken ?? GenerateIdToken();
         }

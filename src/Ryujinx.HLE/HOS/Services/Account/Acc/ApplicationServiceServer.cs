@@ -140,8 +140,9 @@ namespace Ryujinx.HLE.HOS.Services.Account.Acc
                 Logger.Stub?.PrintStub(LogClass.ServiceAcc, new { isNetworkServiceAccountRequired });
             }
 
-            // NOTE: As we returned an invalid UserId if there is more than one user earlier, now we can return only the first one.
-            context.Device.System.AccountManager.GetFirst().UserId.Write(context.ResponseData);
+            // The profile in use, not the first one there is: the OpenPak identity and the cloud
+            // saves follow the open profile, and a title that picks silently must pick the same.
+            context.Device.System.AccountManager.LastOpenedUser.UserId.Write(context.ResponseData);
 
             return ResultCode.Success;
         }

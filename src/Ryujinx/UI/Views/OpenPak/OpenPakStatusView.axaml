@@ -11,40 +11,49 @@
     <Design.DataContext>
         <viewModels:OpenPakViewModel />
     </Design.DataContext>
-    <Grid Margin="20" RowDefinitions="Auto,Auto,*">
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="16" Margin="0,0,0,16">
-            <TextBlock Text="{Binding PlayersOnline}" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
-            <Button Name="RefreshButton" Content="{ext:Locale Dialog_OpenPak_Refresh}" MinWidth="110" IsEnabled="{Binding Ready}" />
-        </StackPanel>
+    <Grid Margin="20" RowDefinitions="Auto,Auto,Auto,*">
+        <!-- The same on every page: what this is on the left, fetch it again on the right. -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,16">
+            <TextBlock Grid.Column="0" Classes="page" Text="{ext:Locale Dialog_OpenPak_PageStatus}" />
+            <Button Grid.Column="1" Name="RefreshButton" Content="{ext:Locale Dialog_OpenPak_Refresh}" MinWidth="90" IsEnabled="{Binding Ready}" />
+        </Grid>
 
-        <Separator Grid.Row="1" Height="1" Margin="0,0,0,12" />
+        <TextBlock Grid.Row="2" Classes="sub" Text="{Binding PlayersOnline}" Margin="0,0,0,12" />
 
-        <Grid Grid.Row="2" ColumnDefinitions="*,20,*">
+        <Grid Grid.Row="3" ColumnDefinitions="*,*" ColumnSpacing="20">
             <DockPanel Grid.Column="0">
                 <TextBlock DockPanel.Dock="Top" Classes="h1" Text="{ext:Locale Dialog_OpenPak_StatusTitles}" Margin="0,0,0,8" />
-                <ListBox ItemsSource="{Binding TitlePopulations}" Background="Transparent">
-                    <ListBox.ItemTemplate>
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding TitlePopulations}">
+                    <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="viewModels:OpenPakPopulationModel">
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Grid.Column="0" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Grid.Column="1" Text="{Binding PlayersText}" Opacity="0.7" />
-                            </Grid>
+                            <Border Classes="settings row">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock Grid.Column="0" Classes="title" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1" Classes="sub" Text="{Binding PlayersText}" />
+                                </Grid>
+                            </Border>
                         </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
             </DockPanel>
-            <DockPanel Grid.Column="2">
+            <DockPanel Grid.Column="1">
                 <TextBlock DockPanel.Dock="Top" Classes="h1" Text="{ext:Locale Dialog_OpenPak_StatusNetworks}" Margin="0,0,0,8" />
-                <ListBox ItemsSource="{Binding NetworkPopulations}" Background="Transparent">
-                    <ListBox.ItemTemplate>
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding NetworkPopulations}">
+                    <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="viewModels:OpenPakPopulationModel">
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Grid.Column="0" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Grid.Column="1" Text="{Binding PlayersText}" Opacity="0.7" />
-                            </Grid>
+                            <Border Classes="settings row">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock Grid.Column="0" Classes="title" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1" Classes="sub" Text="{Binding PlayersText}" />
+                                </Grid>
+                            </Border>
                         </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
             </DockPanel>
         </Grid>
     </Grid>

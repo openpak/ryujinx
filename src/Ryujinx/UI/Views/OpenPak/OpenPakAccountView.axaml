@@ -12,7 +12,12 @@
         <viewModels:OpenPakViewModel />
     </Design.DataContext>
     <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="20" Spacing="16">
+        <StackPanel Margin="20">
+            <!-- The same on every page: what this is on the left, fetch it again on the right. -->
+            <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,16">
+                <TextBlock Grid.Column="0" Classes="page" Text="{ext:Locale Dialog_OpenPak_PageAccount}" />
+                <Button Grid.Column="1" Name="RefreshButton" Content="{ext:Locale Dialog_OpenPak_Refresh}" MinWidth="90" IsEnabled="{Binding Ready}" />
+            </Grid>
 
             <!-- Signed out: one thing to do, and it is the thing everything else needs. -->
             <StackPanel IsVisible="{Binding SignedOut}" Spacing="12" HorizontalAlignment="Center" Margin="0,40,0,0">
@@ -28,59 +33,60 @@
                     MinWidth="160" />
             </StackPanel>
 
-            <StackPanel IsVisible="{Binding SignedIn}" Spacing="16">
-                <StackPanel Orientation="Horizontal" Spacing="16">
-                    <Border
-                        Width="72"
-                        Height="72"
-                        CornerRadius="36"
-                        ClipToBounds="True"
-                        Background="{DynamicResource ThemeControlBorderColor}">
-                        <Image Source="{Binding Avatar}" Stretch="UniformToFill" />
-                    </Border>
-                    <StackPanel VerticalAlignment="Center" Spacing="4">
-                        <TextBlock Text="{Binding DisplayName}" FontSize="22" FontWeight="Bold" />
-                        <TextBlock Text="{Binding ServerAddress}" Opacity="0.7" />
-                    </StackPanel>
-                </StackPanel>
+            <StackPanel IsVisible="{Binding SignedIn}" Spacing="12">
+                <Border Classes="settings card">
+                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
+                        <Border
+                            Grid.Column="0"
+                            Width="56"
+                            Height="56"
+                            CornerRadius="28"
+                            ClipToBounds="True"
+                            Background="{DynamicResource ThemeControlBorderColor}">
+                            <Image Source="{Binding Avatar}" Stretch="UniformToFill" />
+                        </Border>
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
+                            <TextBlock Text="{Binding DisplayName}" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Classes="sub" Text="{Binding ServerAddress}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <Button Name="SignOutButton" Content="{ext:Locale Dialog_OpenPak_SettingsSignOut}" IsEnabled="{Binding Ready}" MinWidth="90" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
 
-                <Separator Height="1" />
+                <Border Classes="settings card">
+                    <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="12">
+                        <TextBlock Grid.Row="0" Grid.Column="0" Classes="sub" Text="{ext:Locale Dialog_OpenPak_AccountFriendCode}" VerticalAlignment="Center" />
+                        <SelectableTextBlock Grid.Row="0" Grid.Column="1" Text="{Binding FriendCode}" VerticalAlignment="Center" FontFamily="{StaticResource JetBrainsMono}" />
+                        <Button Grid.Row="0" Grid.Column="2" Name="CopyCodeButton" Content="{ext:Locale Dialog_OpenPak_AccountCopy}" MinWidth="80" />
 
-                <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="10">
-                    <TextBlock Grid.Row="0" Grid.Column="0" Text="{ext:Locale Dialog_OpenPak_AccountFriendCode}" VerticalAlignment="Center" />
-                    <SelectableTextBlock Grid.Row="0" Grid.Column="1" Text="{Binding FriendCode}" VerticalAlignment="Center" FontFamily="{StaticResource JetBrainsMono}" />
-                    <Button Grid.Row="0" Grid.Column="2" Name="CopyCodeButton" Content="{ext:Locale Dialog_OpenPak_AccountCopy}" MinWidth="80" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="sub" Text="{ext:Locale Dialog_OpenPak_AccountSwitchIdentity}" VerticalAlignment="Center" />
+                        <SelectableTextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SwitchPid}" VerticalAlignment="Center" />
 
-                    <TextBlock Grid.Row="1" Grid.Column="0" Text="{ext:Locale Dialog_OpenPak_AccountSwitchIdentity}" VerticalAlignment="Center" />
-                    <SelectableTextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SwitchPid}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="2" Grid.Column="0" Classes="sub" Text="{ext:Locale Dialog_OpenPak_AccountConsoles}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding LinkedConsoles}" VerticalAlignment="Center" TextWrapping="Wrap" />
 
-                    <TextBlock Grid.Row="2" Grid.Column="0" Text="{ext:Locale Dialog_OpenPak_AccountConsoles}" VerticalAlignment="Center" />
-                    <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding LinkedConsoles}" VerticalAlignment="Center" TextWrapping="Wrap" />
-
-                    <TextBlock Grid.Row="3" Grid.Column="0" Text="{ext:Locale Dialog_OpenPak_StatusPlayers}" VerticalAlignment="Center" />
-                    <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding PlayersOnline}" VerticalAlignment="Center" />
-                </Grid>
-
-                <Separator Height="1" />
-
-                <StackPanel Orientation="Horizontal" Spacing="10">
-                    <Button Name="RefreshButton" Content="{ext:Locale Dialog_OpenPak_Refresh}" IsEnabled="{Binding Ready}" MinWidth="110" />
-                    <Button Name="SignOutButton" Content="{ext:Locale Dialog_OpenPak_SettingsSignOut}" IsEnabled="{Binding Ready}" MinWidth="110" />
-                </StackPanel>
+                        <TextBlock Grid.Row="3" Grid.Column="0" Classes="sub" Text="{ext:Locale Dialog_OpenPak_StatusPlayers}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding PlayersOnline}" VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
 
                 <!-- Signing in is a person's account; linking is the emulated console's identity
                      inside it. A title asking acc:u0 for an id_token needs the second, so it is
                      offered here, next to the first, and hidden once it is done. -->
-                <StackPanel Name="ConsolePanel" Spacing="8" IsVisible="False">
-                    <Separator Height="1" />
-                    <TextBlock Text="{ext:Locale MenuBar_OpenPak_LinkTitle}" FontWeight="SemiBold" />
-                    <TextBlock Name="ConsoleStatus" Opacity="0.8" TextWrapping="Wrap" FontSize="12" />
-                    <Button
-                        Name="LinkConsoleButton"
-                        Content="{ext:Locale MenuBar_OpenPak_LinkAccount}"
-                        HorizontalAlignment="Left"
-                        MinWidth="200" />
-                </StackPanel>
+                <Border Name="ConsolePanel" Classes="settings card" IsVisible="False">
+                    <StackPanel Spacing="8">
+                        <TextBlock Classes="h1" Text="{ext:Locale MenuBar_OpenPak_LinkTitle}" />
+                        <TextBlock Name="ConsoleStatus" Classes="sub" TextWrapping="Wrap" />
+                        <Button
+                            Name="LinkConsoleButton"
+                            Classes="accent"
+                            Content="{ext:Locale MenuBar_OpenPak_LinkAccount}"
+                            HorizontalAlignment="Left"
+                            MinWidth="200" />
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </StackPanel>
     </ScrollViewer>

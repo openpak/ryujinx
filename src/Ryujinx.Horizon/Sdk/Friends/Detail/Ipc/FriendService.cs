@@ -59,7 +59,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
                 return FriendResult.InvalidArgument;
             }
 
-            if (!OpenPakFriends.Available)
+            if (!OpenPakFriends.AvailableFor(userId))
             {
                 Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, offset, filter, pidPlaceholder, pid });
 
@@ -96,7 +96,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
                 return FriendResult.InvalidArgument;
             }
 
-            if (!OpenPakFriends.Available)
+            if (!OpenPakFriends.AvailableFor(userId))
             {
                 Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, offset, filter, pidPlaceholder, pid });
 
@@ -126,7 +126,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             ulong pidPlaceholder,
             [ClientProcessId] ulong pid)
         {
-            if (!OpenPakFriends.Available)
+            if (!OpenPakFriends.AvailableFor(userId))
             {
                 Logger.Stub?.PrintStub(LogClass.ServiceFriend,
                     new { userId, friendIdList = string.Join(", ", friendIds.ToArray()), pidPlaceholder, pid });
@@ -398,7 +398,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(20100)]
         public Result GetFriendCount(out int count, Uid userId, SizedFriendFilter filter, ulong pidPlaceholder, [ClientProcessId] ulong pid)
         {
-            count = OpenPakFriends.Available ? OpenPakFriends.Filtered(filter, 0).Count : 0;
+            count = OpenPakFriends.AvailableFor(userId) ? OpenPakFriends.Filtered(filter, 0).Count : 0;
 
             return Result.Success;
         }
@@ -461,7 +461,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             count = 0;
             count2 = 0;
 
-            if (!OpenPakFriends.Available)
+            if (!OpenPakFriends.AvailableFor(userId))
             {
                 Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
 
@@ -715,7 +715,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(22010)]
         public Result GetReceivedFriendInvitationCountCache(out int count, Uid userId)
         {
-            count = OpenPakFriends.Available ? OpenPakAccount.Instance.NativeInvitationsUnread : 0;
+            count = OpenPakFriends.AvailableFor(userId) ? OpenPakAccount.Instance.NativeInvitationsUnread : 0;
 
             return Result.Success;
         }

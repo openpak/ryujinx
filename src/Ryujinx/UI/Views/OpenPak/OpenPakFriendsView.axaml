@@ -11,113 +11,112 @@
     <Design.DataContext>
         <viewModels:OpenPakViewModel />
     </Design.DataContext>
-    <Grid Margin="20" RowDefinitions="Auto,Auto,*">
+    <Grid Margin="20" RowDefinitions="Auto,Auto,Auto,*">
+        <!-- The same on every page: what this is on the left, fetch it again on the right. -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,16">
+            <TextBlock Grid.Column="0" Classes="page" Text="{ext:Locale Dialog_OpenPak_PageFriends}" />
+            <Button Grid.Column="1" Name="RefreshButton" Content="{ext:Locale Dialog_OpenPak_Refresh}" MinWidth="90" IsEnabled="{Binding Ready}" />
+        </Grid>
 
         <!-- Add by friend code: the only way onto someone's list, so it is the first thing here. -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" Margin="0,0,0,16">
+        <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="10" Margin="0,0,0,12">
             <TextBox
+                Grid.Column="0"
                 Name="FriendCodeBox"
-                Width="240"
                 Text="{Binding FriendCodeEntry}"
                 PlaceholderText="{ext:Locale Dialog_OpenPak_FriendsAddPlaceholder}"
                 IsEnabled="{Binding SignedIn}" />
             <Button
+                Grid.Column="1"
                 Name="AddButton"
                 Classes="accent"
                 Content="{ext:Locale Dialog_OpenPak_FriendsAdd}"
                 MinWidth="90"
                 IsEnabled="{Binding Ready}" />
-            <Button
-                Name="RefreshButton"
-                Content="{ext:Locale Dialog_OpenPak_Refresh}"
-                MinWidth="110"
-                IsEnabled="{Binding Ready}" />
-        </StackPanel>
+        </Grid>
 
-        <TextBlock
-            Grid.Row="1"
-            Text="{ext:Locale Dialog_OpenPak_NeedSignIn}"
-            IsVisible="{Binding SignedOut}"
-            Margin="0,0,0,12" />
+        <TextBlock Grid.Row="2" Classes="sub" Text="{ext:Locale Dialog_OpenPak_NeedSignIn}" IsVisible="{Binding SignedOut}" />
 
-        <TabControl Grid.Row="2" IsVisible="{Binding SignedIn}">
-            <TabItem Header="{ext:Locale Dialog_OpenPak_FriendsList}">
-                <Grid RowDefinitions="Auto,*">
-                    <TextBlock
-                        Grid.Row="0"
-                        Margin="4,12"
-                        Text="{ext:Locale Dialog_OpenPak_FriendsEmpty}"
-                        IsVisible="{Binding FriendsEmpty}"
-                        TextWrapping="Wrap"
-                        Opacity="0.7" />
-                    <ListBox Grid.Row="1" ItemsSource="{Binding Friends}" Background="Transparent">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate x:DataType="viewModels:OpenPakFriendModel">
-                                <Grid ColumnDefinitions="Auto,*,Auto,Auto" Margin="0,4">
-                                    <!-- Presence as a dot: the list is scanned, not read. -->
-                                    <Ellipse
-                                        Grid.Column="0"
-                                        Width="10"
-                                        Height="10"
-                                        Margin="0,0,12,0"
-                                        VerticalAlignment="Center"
-                                        Fill="{Binding PresenceBrush}" />
-                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
-                                        <TextBlock Text="{Binding Status}" Opacity="0.7" FontSize="12" />
-                                    </StackPanel>
-                                    <Button
-                                        Grid.Column="2"
-                                        Margin="6,0,0,0"
-                                        Click="OnRemove"
-                                        Content="{ext:Locale Dialog_OpenPak_FriendsRemove}" />
-                                    <Button
-                                        Grid.Column="3"
-                                        Margin="6,0,0,0"
-                                        Click="OnBlock"
-                                        Content="{ext:Locale Dialog_OpenPak_FriendsBlock}" />
-                                </Grid>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                </Grid>
-            </TabItem>
-            <TabItem Header="{ext:Locale Dialog_OpenPak_FriendsRequests}">
-                <Grid RowDefinitions="Auto,*">
-                    <TextBlock
-                        Grid.Row="0"
-                        Margin="4,12"
-                        Text="{ext:Locale Dialog_OpenPak_FriendsRequestsEmpty}"
-                        IsVisible="{Binding RequestsEmpty}"
-                        Opacity="0.7" />
-                    <ListBox Grid.Row="1" ItemsSource="{Binding Requests}" Background="Transparent">
-                        <ListBox.ItemTemplate>
+        <!-- One list, not two tabs: a request nobody can see behind a tab is a request nobody
+             answers, so they sit on top of the friends and take no room when there are none. -->
+        <ScrollViewer Grid.Row="3" IsVisible="{Binding SignedIn}" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel>
+                <StackPanel IsVisible="{Binding !RequestsEmpty}" Margin="0,0,0,16">
+                    <TextBlock Classes="h1" Text="{ext:Locale Dialog_OpenPak_FriendsRequests}" Margin="0,0,0,8" />
+                    <ItemsControl ItemsSource="{Binding Requests}">
+                        <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="viewModels:OpenPakRequestModel">
-                                <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,4">
-                                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
-                                        <TextBlock Text="{Binding Status}" Opacity="0.7" FontSize="12" />
-                                    </StackPanel>
-                                    <Button
-                                        Grid.Column="1"
-                                        Margin="6,0,0,0"
-                                        Classes="accent"
-                                        Click="OnAccept"
-                                        IsVisible="{Binding CanAccept}"
-                                        Content="{ext:Locale Dialog_OpenPak_FriendsAccept}" />
-                                    <!-- Declining someone else's request and withdrawing your own
-                                         are the same call, so the button only changes its word. -->
-                                    <Button
-                                        Grid.Column="2"
-                                        Margin="6,0,0,0"
-                                        Click="OnDecline"
-                                        Content="{Binding DeclineText}" />
-                                </Grid>
+                                <Border Classes="settings row">
+                                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                            <TextBlock Classes="title" Text="{Binding DisplayName}" />
+                                            <TextBlock Classes="sub" Text="{Binding Status}" />
+                                        </StackPanel>
+                                        <Button
+                                            Grid.Column="1"
+                                            Classes="accent"
+                                            Click="OnAccept"
+                                            IsVisible="{Binding CanAccept}"
+                                            Content="{ext:Locale Dialog_OpenPak_FriendsAccept}" />
+                                        <!-- Declining someone else's request and withdrawing your own
+                                             are the same call, so the button only changes its word. -->
+                                        <Button
+                                            Grid.Column="2"
+                                            Click="OnDecline"
+                                            Content="{Binding DeclineText}" />
+                                    </Grid>
+                                </Border>
                             </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                </Grid>
-            </TabItem>
-        </TabControl>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <TextBlock Classes="h1" Text="{ext:Locale Dialog_OpenPak_FriendsList}" Margin="0,0,0,8" />
+                <TextBlock Classes="sub" Text="{ext:Locale Dialog_OpenPak_FriendsEmpty}" IsVisible="{Binding FriendsEmpty}" TextWrapping="Wrap" />
+                <ItemsControl ItemsSource="{Binding Friends}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="viewModels:OpenPakFriendModel">
+                            <Border Classes="settings row">
+                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                                    <!-- Presence as a dot: the list is scanned, not read. -->
+                                    <Panel Grid.Column="0" Width="34" Height="34">
+                                        <Border CornerRadius="17" Background="{DynamicResource ThemeControlBorderColor}">
+                                            <TextBlock
+                                                Text="{Binding Initial}"
+                                                FontWeight="SemiBold"
+                                                HorizontalAlignment="Center"
+                                                VerticalAlignment="Center"
+                                                Margin="0" />
+                                        </Border>
+                                        <Ellipse
+                                            Width="11"
+                                            Height="11"
+                                            HorizontalAlignment="Right"
+                                            VerticalAlignment="Bottom"
+                                            Stroke="{DynamicResource ThemeDarkColor}"
+                                            StrokeThickness="2"
+                                            Fill="{Binding PresenceBrush}" />
+                                    </Panel>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                        <TextBlock Classes="title" Text="{Binding DisplayName}" />
+                                        <TextBlock Classes="sub" Text="{Binding Status}" />
+                                    </StackPanel>
+                                    <!-- Both are rare and asked about first, so they wait behind
+                                         one button instead of shouting from every row. -->
+                                    <Button Grid.Column="2" Content="•••" VerticalAlignment="Center">
+                                        <Button.Flyout>
+                                            <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                                <MenuItem Click="OnRemove" Header="{ext:Locale Dialog_OpenPak_FriendsRemove}" />
+                                                <MenuItem Click="OnBlock" Header="{ext:Locale Dialog_OpenPak_FriendsBlock}" />
+                                            </MenuFlyout>
+                                        </Button.Flyout>
+                                    </Button>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </ScrollViewer>
     </Grid>
 </UserControl>

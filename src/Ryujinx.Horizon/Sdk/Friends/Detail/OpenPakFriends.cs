@@ -23,6 +23,12 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail
         public static bool Available => OpenPakAccount.Instance.SignedIn;
 
         /// <summary>
+        /// Whether that profile is the one signed in. The account is the active profile's; any
+        /// other profile a title asks about is offline and has no friends to be served.
+        /// </summary>
+        public static bool AvailableFor(Uid userId) => Available && userId.ToString() == OpenPakConfig.ProfileId;
+
+        /// <summary>
         /// The friends of the signed-in account that pass <paramref name="filter"/>, oldest-first
         /// so that paging by <paramref name="offset"/> is stable between calls.
         /// </summary>

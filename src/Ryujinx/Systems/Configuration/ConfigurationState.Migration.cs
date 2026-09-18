@@ -174,6 +174,7 @@ namespace Ryujinx.Ava.Systems.Configuration
             OpenPak.WebsiteUrl.Value = cff.OpenPakWebsiteUrl;
             OpenPak.RedirectGuestDns.Value = cff.OpenPakRedirectGuestDns;
             OpenPak.Asked.Value = cff.OpenPakAsked;
+            OpenPak.StartupProfile.Value = cff.OpenPakStartupProfile ?? string.Empty;
 
             Debug.EnableGdbStub.Value = shouldLoadFromFile ? cff.EnableGdbStub : Debug.EnableGdbStub.Value; // Get from global config only
             Debug.GdbStubPort.Value = shouldLoadFromFile ? cff.GdbStubPort : Debug.GdbStubPort.Value; // Get from global config only
@@ -565,6 +566,14 @@ namespace Ryujinx.Ava.Systems.Configuration
                     // somebody signs in, and the first launch asks whether they want to.
                     cff.OpenPakEnabled = true;
                     cff.OpenPakAsked = false;
+                }),
+                (76, static cff =>
+                {
+                    // The profile is chosen when the emulator opens now, so a title asking which
+                    // profile to use would only ask the same question twice. The setting stays
+                    // for anyone who wants the question back.
+                    cff.OpenPakStartupProfile = string.Empty;
+                    cff.SkipUserProfiles |= cff.OpenPakEnabled;
                 })
             );
     }

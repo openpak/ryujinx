@@ -1,10 +1,12 @@
 using Avalonia;
 using Avalonia.Media;
+using Ryujinx.Ava.Common.Locale;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Ryujinx.Ava.UI.Controls;
 using Ryujinx.Ava.UI.ViewModels;
 using Ryujinx.Ava.UI.Views.User;
 using Ryujinx.HLE.HOS.Services.Account.Acc;
+using Ryujinx.OpenPak;
 using Profile = Ryujinx.HLE.HOS.Services.Account.Acc.UserProfile;
 
 namespace Ryujinx.Ava.UI.Models
@@ -24,6 +26,14 @@ namespace Ryujinx.Ava.UI.Models
 
         [ObservableProperty]
         public partial bool IsPointerOver { get; set; }
+
+        /// <summary>
+        /// The OpenPak account this profile is signed in as, or "Offline"; null with OpenPak off,
+        /// where profiles are what they are upstream.
+        /// </summary>
+        public string OpenPakBadge => !OpenPakConfig.Enabled
+            ? null
+            : OpenPakLinks.Get(UserId.ToString())?.DisplayName ?? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_BadgeOffline];
 
         [ObservableProperty]
         public partial IBrush BackgroundColor { get; set; }

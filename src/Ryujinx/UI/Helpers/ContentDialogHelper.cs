@@ -541,7 +541,7 @@ namespace Ryujinx.Ava.UI.Helpers
 
         public static async Task<FAContentDialogResult> ShowAsync(FAContentDialog contentDialog)
         {
-            FAContentDialogResult result;
+            FAContentDialogResult result = FAContentDialogResult.None;
             bool isTopDialog = true;
 
             Window parent = GetMainWindow();
@@ -570,6 +570,7 @@ namespace Ryujinx.Ava.UI.Helpers
 */
 
                 parent.PositionChanged += OverlayOnPositionChanged;
+                parent.Resized += OverlayOnResized;
 
                 void OverlayOnPositionChanged(object sender, PixelPointEventArgs e)
                 {
@@ -578,6 +579,20 @@ namespace Ryujinx.Ava.UI.Helpers
                         return;
                     }
 
+                    _contentDialogOverlayWindow.Position = parent.PointToScreen(new Point());
+                }
+
+                // A tiling window manager sizes the main window after it opens, so a dialog shown
+                // at startup would otherwise keep the untiled size and sit off the window.
+                void OverlayOnResized(object sender, WindowResizedEventArgs e)
+                {
+                    if (_contentDialogOverlayWindow is null)
+                    {
+                        return;
+                    }
+
+                    _contentDialogOverlayWindow.Width = parent.Bounds.Width;
+                    _contentDialogOverlayWindow.Height = parent.Bounds.Height;
                     _contentDialogOverlayWindow.Position = parent.PointToScreen(new Point());
                 }
 
@@ -601,7 +616,12 @@ namespace Ryujinx.Ava.UI.Helpers
                     result = await ShowDialog();
                 }
 
-                result = await _contentDialogOverlayWindow.ShowDialog<FAContentDialogResult>(parent);
+                // The overlay closes without a result of its own; the dialog's is set above, and
+                // taking the window's here would turn every button into None.
+                await _contentDialogOverlayWindow.ShowDialog(parent);
+
+                parent.PositionChanged -= OverlayOnPositionChanged;
+                parent.Resized -= OverlayOnResized;
             }
             else
             {

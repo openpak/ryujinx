@@ -76,13 +76,13 @@ namespace Ryujinx.Ava.UI.Views.Settings
             AttachedToVisualTree += (_, _) => Refresh();
         }
 
-        /// <summary>Say what is true right now: signed in or not.</summary>
+        /// <summary>Say what is true right now, for the open profile: signed in or not.</summary>
         private void Refresh()
         {
-            AccountStatus.Text = OpenPakAccount.Instance.SignedIn
+            AccountStatus.Text = $"{OpenPakConfig.ProfileName} — " + (OpenPakAccount.Instance.SignedIn
                 ? LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.MenuBar_OpenPak_SignedInAs,
                     OpenPakAccount.Instance.DisplayName ?? OpenPakConfig.WebsiteUrl)
-                : LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SettingsNotSignedIn];
+                : LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SettingsNotSignedIn]);
 
             SignInButton.IsVisible = !OpenPakApi.Instance.SignedIn;
             SignOutButton.IsVisible = OpenPakApi.Instance.SignedIn;

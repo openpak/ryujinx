@@ -1,42 +1,64 @@
 <UserControl
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="clr-namespace:FluentAvalonia.UI.Controls;assembly=FluentAvalonia"
     xmlns:ext="clr-namespace:Ryujinx.Ava.Common.Markup"
     x:Class="Ryujinx.Ava.UI.Views.Dialog.OpenPakLinkView"
-    Width="560">
-    <StackPanel Spacing="16">
+    Width="500">
+    <UserControl.Styles>
+        <Style Selector="TextBlock.label">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+    </UserControl.Styles>
+    <StackPanel Spacing="14">
         <TextBlock
             Name="Instructions"
             TextWrapping="Wrap"
+            Opacity="0.8"
             Text="{ext:Locale MenuBar_OpenPak_LinkScan}" />
-        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="24">
-            <StackPanel Name="PhonePanel" Grid.Column="0" Spacing="8" HorizontalAlignment="Center">
-                <Border Background="White" Padding="8" CornerRadius="4">
-                    <Image Name="QrImage" Width="168" Height="168" />
-                </Border>
-                <!-- Hidden until a phone has signed in: a photograph of this screen must not be
-                     worth anything on its own. -->
-                <TextBlock
-                    Name="CodeText"
-                    FontSize="26"
-                    FontWeight="Bold"
-                    HorizontalAlignment="Center"
-                    IsVisible="False" />
-            </StackPanel>
-            <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Center">
-                <TextBlock Text="{ext:Locale MenuBar_OpenPak_LinkOr}" FontWeight="Bold" />
-                <TextBox Name="EmailBox" PlaceholderText="{ext:Locale MenuBar_OpenPak_LinkEmail}" />
-                <TextBox Name="PasswordBox" PasswordChar="•" PlaceholderText="{ext:Locale MenuBar_OpenPak_LinkPassword}" />
-                <Button
-                    Name="SignInButton"
-                    Content="{ext:Locale MenuBar_OpenPak_SignIn}"
-                    HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Center" />
-            </StackPanel>
+        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="14">
+            <Border Name="PhonePanel" Grid.Column="0" Classes="settings" Padding="16">
+                <StackPanel Spacing="10" VerticalAlignment="Center">
+                    <Border Background="White" Padding="8" CornerRadius="6" HorizontalAlignment="Center">
+                        <Image Name="QrImage" Width="140" Height="140" />
+                    </Border>
+                    <!-- Hidden until a phone has signed in: a photograph of this screen must not be
+                         worth anything on its own. -->
+                    <TextBlock
+                        Name="CodeText"
+                        FontSize="22"
+                        FontWeight="Bold"
+                        FontFamily="{StaticResource JetBrainsMono}"
+                        LetterSpacing="2"
+                        HorizontalAlignment="Center"
+                        IsVisible="False" />
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="1" Classes="settings" Padding="16">
+                <StackPanel Spacing="12" VerticalAlignment="Center">
+                    <TextBlock Classes="h1" Text="{ext:Locale MenuBar_OpenPak_LinkOr}" />
+                    <StackPanel>
+                        <TextBlock Classes="label" Text="{ext:Locale MenuBar_OpenPak_LinkEmail}" />
+                        <TextBox Name="EmailBox" />
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Classes="label" Text="{ext:Locale MenuBar_OpenPak_LinkPassword}" />
+                        <TextBox Name="PasswordBox" PasswordChar="•" Classes="revealPasswordButton" />
+                    </StackPanel>
+                    <Button
+                        Name="SignInButton"
+                        Classes="accent"
+                        Content="{ext:Locale MenuBar_OpenPak_SignIn}"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center" />
+                </StackPanel>
+            </Border>
         </Grid>
-        <TextBlock Name="StatusText" TextWrapping="Wrap" IsVisible="False" />
+        <ui:FAInfoBar Name="StatusBar" IsClosable="False" />
         <Button
             Name="ApproveButton"
+            Classes="accent"
             Content="{ext:Locale MenuBar_OpenPak_LinkApprove}"
             IsVisible="False"
             HorizontalAlignment="Stretch"

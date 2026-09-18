@@ -4,7 +4,9 @@ using LibHac.Fs;
 using LibHac.Fs.Shim;
 using Ryujinx.Common;
 using Ryujinx.Common.Logging;
+using Ryujinx.HLE.HOS.Services.Account.OpenPak;
 using Ryujinx.Horizon.Sdk.Account;
+using Ryujinx.OpenPak;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -93,6 +95,9 @@ namespace Ryujinx.HLE.HOS.Services.Account.Acc
                 (LastOpenedUser = profile).AccountState = AccountState.Open;
 
                 _accountSaveDataManager.LastOpened = userId;
+
+                // The OpenPak identity follows the open profile: each profile is its own account.
+                OpenPakConfig.SetProfile(userId.ToString(), profile.Name);
             }
 
             _accountSaveDataManager.Save(_profiles);
@@ -176,6 +181,11 @@ namespace Ryujinx.HLE.HOS.Services.Account.Acc
                 }
             }
 
+            if (userId == LastOpenedUser?.UserId)
+            {
+                OpenPakConfig.SetProfile(userId.ToString(), name);
+            }
+
             _accountSaveDataManager.Save(_profiles);
         }
 
@@ -184,6 +194,8 @@ namespace Ryujinx.HLE.HOS.Services.Account.Acc
             DeleteSaveData(userId);
 
             _profiles.Remove(userId.ToString(), out _);
+
+            _ = OpenPakSession.ForgetProfileAsync(userId.ToString());
 
             OpenUser(DefaultUserId);
 

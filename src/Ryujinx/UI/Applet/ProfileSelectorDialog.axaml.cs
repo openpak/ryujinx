@@ -83,6 +83,32 @@ namespace Ryujinx.Ava.UI.Applet
             }
         }
 
+        /// <summary>
+        /// The picker the emulator opens with when there is more than one profile and it was told
+        /// to ask. Not skipped by the setting that skips a title's own picker: this is the one
+        /// place the profile is chosen. Null when closed, which keeps the last used profile.
+        /// </summary>
+        public static async Task<(UserId Id, bool AddAccount)> ShowStartupDialog(ProfileSelectorDialogViewModel viewModel)
+        {
+            FAContentDialog contentDialog = new()
+            {
+                Title = LocaleManager.Instance[LocaleKeys.UserProfileWindowTitle],
+                PrimaryButtonText = LocaleManager.Instance[LocaleKeys.Continue],
+                SecondaryButtonText = LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_PickerAdd],
+                CloseButtonText = LocaleManager.Instance[LocaleKeys.Cancel],
+                DefaultButton = FAContentDialogButton.Primary,
+                Content = new ProfileSelectorDialog(viewModel),
+                Padding = new Thickness(0)
+            };
+
+            return await ContentDialogHelper.ShowAsync(contentDialog) switch
+            {
+                FAContentDialogResult.Primary => (viewModel.SelectedUserId, false),
+                FAContentDialogResult.Secondary => (UserId.Null, true),
+                _ => (UserId.Null, false),
+            };
+        }
+
         public static async Task<(UserId Id, bool Result)> ShowInputDialog(ProfileSelectorDialogViewModel viewModel)
         {
 

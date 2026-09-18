@@ -1,6 +1,7 @@
 using NUnit.Framework;
 using Ryujinx.Common.Configuration;
 using Ryujinx.HLE.HOS.Services.Account.OpenPak;
+using Ryujinx.OpenPak;
 using System;
 using System.IO;
 using System.Threading;
@@ -29,6 +30,9 @@ namespace Ryujinx.Tests.HLE
             // Initialize falls back to the user profile if the directory is not already there.
             Directory.CreateDirectory(directory);
             AppDataManager.Initialize(directory);
+
+            // The session signs in as the open profile, and does nothing before one is open.
+            OpenPakConfig.SetProfile("00000000000000010000000000000000", "Test");
 
             return directory;
         }

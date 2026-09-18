@@ -13,10 +13,17 @@
         <viewModels:OpenPakViewModel />
     </Design.DataContext>
     <Grid Margin="20" RowDefinitions="Auto,Auto,Auto,*">
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" Margin="0,0,0,12">
+        <!-- The same on every page: what this is on the left, fetch it again on the right. -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,16">
+            <TextBlock Grid.Column="0" Classes="page" Text="{ext:Locale Dialog_OpenPak_PageNews}" />
+            <Button Grid.Column="1" Name="RefreshButton" Content="{ext:Locale Dialog_OpenPak_Refresh}" MinWidth="90" IsEnabled="{Binding Ready}" />
+        </Grid>
+
+        <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="10" Margin="0,0,0,12">
             <ComboBox
+                Grid.Column="0"
                 Name="TitleBox"
-                Width="320"
+                HorizontalAlignment="Stretch"
                 ItemsSource="{Binding Titles}"
                 SelectedItem="{Binding SelectedTitle}">
                 <ComboBox.ItemTemplate>
@@ -25,28 +32,27 @@
                     </DataTemplate>
                 </ComboBox.ItemTemplate>
             </ComboBox>
-            <Button Name="RefreshButton" Content="{ext:Locale Dialog_OpenPak_Refresh}" MinWidth="110" IsEnabled="{Binding Ready}" />
-            <Button Name="SaveButton" Content="{ext:Locale Dialog_OpenPak_NewsSave}" MinWidth="130" IsEnabled="{Binding Ready}" />
+            <Button Grid.Column="1" Name="SaveButton" Content="{ext:Locale Dialog_OpenPak_NewsSave}" MinWidth="90" IsEnabled="{Binding Ready}" />
+        </Grid>
+
+        <StackPanel Grid.Row="2" Margin="0,0,0,12">
+            <TextBlock Classes="sub" Text="{Binding NewsValidFrom}" />
+            <TextBlock Classes="sub" Text="{ext:Locale Dialog_OpenPak_NewsEmpty}" IsVisible="{Binding NewsEmpty}" />
         </StackPanel>
 
-        <TextBlock Grid.Row="1" Text="{Binding NewsValidFrom}" Opacity="0.8" Margin="4,0,0,12" />
-
-        <TextBlock
-            Grid.Row="2"
-            Text="{ext:Locale Dialog_OpenPak_NewsEmpty}"
-            IsVisible="{Binding NewsEmpty}"
-            Opacity="0.7"
-            Margin="4,0,0,12" />
-
-        <ListBox Grid.Row="3" ItemsSource="{Binding NewsFiles}" Background="Transparent">
-            <ListBox.ItemTemplate>
-                <DataTemplate x:DataType="viewModels:OpenPakNewsFileModel">
-                    <StackPanel Margin="0,4" Spacing="2">
-                        <TextBlock Text="{Binding Path}" FontFamily="{StaticResource JetBrainsMono}" />
-                        <TextBlock Text="{Binding Detail}" Opacity="0.6" FontSize="11" />
-                    </StackPanel>
-                </DataTemplate>
-            </ListBox.ItemTemplate>
-        </ListBox>
+        <ScrollViewer Grid.Row="3" HorizontalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding NewsFiles}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="viewModels:OpenPakNewsFileModel">
+                        <Border Classes="settings row">
+                            <StackPanel>
+                                <TextBlock Classes="title" Text="{Binding Path}" FontFamily="{StaticResource JetBrainsMono}" />
+                                <TextBlock Classes="sub" Text="{Binding Detail}" />
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
     </Grid>
 </UserControl>

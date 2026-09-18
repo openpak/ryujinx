@@ -97,7 +97,7 @@ namespace Ryujinx.Ava.UI.Views.User
             }
         }
 
-        private static byte[] ProcessProfileImage(byte[] buffer)
+        internal static byte[] ProcessProfileImage(byte[] buffer)
         {
             using SKBitmap bitmap = SKBitmap.Decode(buffer);
 

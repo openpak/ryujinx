@@ -35,6 +35,15 @@ namespace Ryujinx.Ava.UI.Views.Dialog
 
             SignInButton.Click += async (_, _) => await SignInAsync();
             ApproveButton.Click += async (_, _) => await ApproveAsync();
+            PasswordBox.KeyDown += async (_, e) =>
+            {
+                if (e.Key == Avalonia.Input.Key.Enter && SignInButton.IsEnabled)
+                {
+                    e.Handled = true;
+
+                    await SignInAsync();
+                }
+            };
         }
 
         /// <summary>Shows the dialog and returns whether an account ended up linked.</summary>
@@ -82,7 +91,6 @@ namespace Ryujinx.Ava.UI.Views.Dialog
 
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-
                     if (invitation.Qr != null)
                     {
                         QrImage.Source = new Bitmap(new MemoryStream(invitation.Qr));
@@ -113,9 +121,10 @@ namespace Ryujinx.Ava.UI.Views.Dialog
                 // step that a stranger with the code cannot take for them.
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    StatusText.Text = LocaleManager.Instance.UpdateAndGetDynamicValue(
+                    StatusBar.Severity = FAInfoBarSeverity.Informational;
+                    StatusBar.Message = LocaleManager.Instance.UpdateAndGetDynamicValue(
                         LocaleKeys.MenuBar_OpenPak_LinkClaimed, account);
-                    StatusText.IsVisible = ApproveButton.IsVisible = true;
+                    StatusBar.IsOpen = ApproveButton.IsVisible = true;
                 });
             }
             catch (OperationCanceledException)
@@ -182,8 +191,9 @@ namespace Ryujinx.Ava.UI.Views.Dialog
 
         private void Status(string message) => Dispatcher.UIThread.Post(() =>
         {
-            StatusText.Text = message;
-            StatusText.IsVisible = message.Length > 0;
+            StatusBar.Severity = FAInfoBarSeverity.Error;
+            StatusBar.Message = message;
+            StatusBar.IsOpen = message.Length > 0;
         });
     }
 }

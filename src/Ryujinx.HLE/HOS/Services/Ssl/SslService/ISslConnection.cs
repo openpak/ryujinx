@@ -36,10 +36,16 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
         private SessionCacheMode _sessionCacheMode;
         private string _hostName;
 
-        // Plaintext trace for battle.net SSL connections (OpenPak research):
-        // enabled with RYU_BNET_SSL_TRACE=1 in the emulator's environment.
-        private static readonly bool SslTraceEnabled =
+        // Plaintext trace for guest SSL connections (OpenPak research), set in the
+        // emulator's environment: RYU_BNET_SSL_TRACE=1 traces battle.net hosts only,
+        // RYU_SSL_TRACE=1 traces every host.
+        private static readonly bool SslTraceAllHosts =
+            Environment.GetEnvironmentVariable("RYU_SSL_TRACE") == "1";
+        private static readonly bool SslTraceEnabled = SslTraceAllHosts ||
             Environment.GetEnvironmentVariable("RYU_BNET_SSL_TRACE") == "1";
+
+        private bool TraceThisHost => SslTraceEnabled && _hostName != null &&
+            (SslTraceAllHosts || _hostName.Contains("battle.net"));
 
         private SslManagedSocketConnection _connection;
         private BsdContext _bsdContext;
@@ -208,7 +214,14 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
                 return ResultCode.NoSocket;
             }
 
-            return _connection.Handshake(_hostName);
+            ResultCode handshakeResult = _connection.Handshake(_hostName);
+
+            if (TraceThisHost)
+            {
+                Logger.Info?.Print(LogClass.ServiceSsl, $"SSLHS {_hostName} -> {handshakeResult}");
+            }
+
+            return handshakeResult;
         }
 
         [CommandCmif(9)]
@@ -258,10 +271,15 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
             // TODO: Better error management.
             result = _connection.Read(out int readCount, region.Memory);
 
+            if (TraceThisHost && result != ResultCode.Success && result != ResultCode.WouldBlock)
+            {
+                Logger.Info?.Print(LogClass.ServiceSsl, $"SSLRX {_hostName} failed: {result}");
+            }
+
             if (result == ResultCode.Success)
             {
                 context.ResponseData.Write(readCount);
-                if (SslTraceEnabled && _hostName != null && _hostName.Contains("battle.net"))
+                if (TraceThisHost)
                 {
                     int n = Math.Min(readCount, 96);
                     Logger.Info?.Print(LogClass.ServiceSsl, $"SSLRX {_hostName} {readCount}B: {Convert.ToHexString(region.Memory.Span[..n])}");
@@ -283,7 +301,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
             // We don't dispose as this isn't supposed to be modified
             WritableRegion region = context.Memory.GetWritableRegion(context.Request.SendBuff[0].Position, (int)context.Request.SendBuff[0].Size);
 
-            if (SslTraceEnabled && _hostName != null && _hostName.Contains("battle.net"))
+            if (TraceThisHost)
             {
                 int n = (int)Math.Min(region.Memory.Length, 96);
                 Logger.Info?.Print(LogClass.ServiceSsl, $"SSLTX {_hostName} {region.Memory.Length}B: {Convert.ToHexString(region.Memory.Span[..n])}");
@@ -291,6 +309,11 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
 
             // TODO: Better error management.
             ResultCode result = _connection.Write(out int writtenCount, region.Memory);
+
+            if (TraceThisHost && result != ResultCode.Success)
+            {
+                Logger.Info?.Print(LogClass.ServiceSsl, $"SSLTX {_hostName} failed: {result}");
+            }
 
             if (result == ResultCode.Success)
             {

@@ -1,26 +1,43 @@
 <UserControl
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="clr-namespace:FluentAvalonia.UI.Controls;assembly=FluentAvalonia"
     xmlns:ext="clr-namespace:Ryujinx.Ava.Common.Markup"
     x:Class="Ryujinx.Ava.UI.Views.Dialog.OpenPakSignInView"
-    Width="420">
-    <StackPanel Spacing="12">
-        <TextBox Name="EmailBox" PlaceholderText="{ext:Locale Dialog_OpenPak_SignInEmail}" />
-        <TextBox Name="PasswordBox" PasswordChar="•" PlaceholderText="{ext:Locale Dialog_OpenPak_SignInPassword}" />
+    Width="340">
+    <UserControl.Styles>
+        <Style Selector="TextBlock.label">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+        <Style Selector="TextBlock.hint">
+            <Setter Property="Opacity" Value="0.65" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Margin" Value="0,4,0,0" />
+        </Style>
+    </UserControl.Styles>
+    <StackPanel Spacing="14">
+        <!-- Why the dialog appeared on a first run; hidden every other time. -->
+        <TextBlock Name="IntroText" TextWrapping="Wrap" Opacity="0.8" IsVisible="False" />
+        <ui:FAInfoBar Name="StatusBar" IsClosable="False" Severity="Error" />
+        <StackPanel>
+            <TextBlock Classes="label" Text="{ext:Locale Dialog_OpenPak_SignInEmail}" />
+            <TextBox Name="EmailBox" />
+        </StackPanel>
+        <StackPanel>
+            <TextBlock Classes="label" Text="{ext:Locale Dialog_OpenPak_SignInPassword}" />
+            <TextBox Name="PasswordBox" PasswordChar="•" Classes="revealPasswordButton" />
+        </StackPanel>
         <!-- Named so the account's device list says which machine this is, rather than listing
              three identical entries a person cannot tell apart when revoking one. -->
-        <TextBox Name="DeviceBox" PlaceholderText="{ext:Locale Dialog_OpenPak_SignInDevice}" />
-        <TextBlock Name="StatusText" TextWrapping="Wrap" IsVisible="False" />
-        <Button
-            Name="SignInButton"
-            Classes="accent"
-            Content="{ext:Locale Dialog_OpenPak_SignInSubmit}"
-            HorizontalAlignment="Stretch"
-            HorizontalContentAlignment="Center" />
-        <Button
+        <StackPanel>
+            <TextBlock Classes="label" Text="{ext:Locale Dialog_OpenPak_SignInDevice}" />
+            <TextBox Name="DeviceBox" />
+            <TextBlock Classes="hint" TextWrapping="Wrap" Text="{ext:Locale Dialog_OpenPak_SignInDeviceHint}" />
+        </StackPanel>
+        <HyperlinkButton
             Name="CreateButton"
-            Content="{ext:Locale Dialog_OpenPak_SignInCreate}"
-            HorizontalAlignment="Stretch"
-            HorizontalContentAlignment="Center" />
+            Padding="0"
+            Content="{ext:Locale Dialog_OpenPak_SignInCreate}" />
     </StackPanel>
 </UserControl>

@@ -48,6 +48,16 @@ namespace Ryujinx.OpenPak
                     Reset();
                 }
             };
+
+            // Another profile is another account: its own bearer, and everything that was showing
+            // the last one's friends has to hear about it.
+            OpenPakConfig.ProfileChanged += () =>
+            {
+                _tokenLoaded = false;
+                _token = null;
+
+                SignedInChanged?.Invoke();
+            };
         }
 
         /// <summary>Raised when the signed-in account changes, so open dialogs can catch up.</summary>
@@ -66,16 +76,46 @@ namespace Ryujinx.OpenPak
                 if (!_tokenLoaded)
                 {
                     _tokenLoaded = true;
-                    _token = SecretStore.Available ? SecretStore.Load(StoreKey) : null;
+                    _token = SecretStore.Available && OpenPakConfig.ProfileId.Length > 0 ? LoadToken() : null;
                 }
 
                 return _token;
             }
         }
 
-        /// <summary>Tokens are kept per site: pointing at another OpenPak is another account.</summary>
-        private static string StoreKey => OpenPakConfig.WebsiteUrl.Replace("https://", string.Empty)
+        /// <summary>
+        /// The active profile's bearer. An install from before profiles had one bearer per site;
+        /// the first profile to ask for it — the one open at the first launch since — takes it.
+        /// </summary>
+        private static string LoadToken()
+        {
+            string token = SecretStore.Load(StoreKey);
+
+            if (token != null)
+            {
+                return token;
+            }
+
+            token = SecretStore.Load(SiteKey);
+
+            if (token != null && SecretStore.Store(StoreKey, token))
+            {
+                SecretStore.Erase(SiteKey);
+
+                Logger.Info?.Print(LogClass.Application, $"[OpenPak] The saved sign-in now belongs to profile {OpenPakConfig.ProfileName}");
+            }
+
+            return token;
+        }
+
+        /// <summary>The site, as a key: pointing at another OpenPak is another account.</summary>
+        internal static string SiteKey => OpenPakConfig.WebsiteUrl.Replace("https://", string.Empty)
             .Replace("http://", string.Empty).Replace('/', '_').Replace(':', '-');
+
+        /// <summary>Tokens are kept per site and per profile: each profile is its own account.</summary>
+        private static string StoreKey => KeyFor(OpenPakConfig.ProfileId);
+
+        private static string KeyFor(string profileId) => $"{SiteKey}/{profileId}";
 
         private void Reset()
         {
@@ -148,6 +188,18 @@ namespace Ryujinx.OpenPak
 
                 string token = document.RootElement.GetProperty("token").GetString();
 
+                // One account, one profile: two profiles on one account would share a cloud-save
+                // slot and overwrite each other's progress. The token just minted is revoked
+                // rather than kept, so the refusal leaves nothing behind.
+                OpenPakProfile me = await MeAsync(token, cancellationToken);
+
+                if (me?.AccountId != null && OpenPakLinks.HolderOf(me.AccountId, OpenPakConfig.ProfileId) is { } holder)
+                {
+                    await RevokeAsync(token, cancellationToken);
+
+                    return $"This OpenPak account is already linked to the profile \"{holder}\". Sign in there, or sign that profile out first.";
+                }
+
                 if (!SecretStore.Store(StoreKey, token))
                 {
                     return "Signed in, but the token could not be saved to the password store, so it was discarded.";
@@ -155,6 +207,11 @@ namespace Ryujinx.OpenPak
 
                 _token = token;
                 _tokenLoaded = true;
+
+                if (me != null)
+                {
+                    OpenPakLinks.Set(OpenPakConfig.ProfileId, me.AccountId, me.DisplayName, OpenPakConfig.ProfileName);
+                }
 
                 SignedInChanged?.Invoke();
 
@@ -176,25 +233,54 @@ namespace Ryujinx.OpenPak
         {
             try
             {
-                if (Token != null)
-                {
-                    using HttpRequestMessage request = Authorised(HttpMethod.Delete, $"{BaseUrl}/api/v1/token");
-
-                    using HttpResponseMessage response = await Client.SendAsync(request, cancellationToken);
-                }
-            }
-            catch (Exception exception)
-            {
-                Logger.Debug?.Print(LogClass.Application, $"[OpenPak] Sign-out did not reach the server: {exception.Message}");
+                await RevokeAsync(Token, cancellationToken);
             }
             finally
             {
                 SecretStore.Erase(StoreKey);
+                OpenPakLinks.Remove(OpenPakConfig.ProfileId);
 
                 _token = null;
                 _tokenLoaded = true;
 
                 SignedInChanged?.Invoke();
+            }
+        }
+
+        /// <summary>
+        /// Sign a profile that is not the active one out, for good: the profile is being deleted,
+        /// and a bearer outliving its profile would be an account nobody can see to sign out.
+        /// </summary>
+        public async Task ForgetProfileAsync(string profileId, CancellationToken cancellationToken)
+        {
+            if (SecretStore.Available && SecretStore.Load(KeyFor(profileId)) is { } token)
+            {
+                await RevokeAsync(token, cancellationToken);
+
+                SecretStore.Erase(KeyFor(profileId));
+            }
+
+            OpenPakLinks.Remove(profileId);
+        }
+
+        private async Task RevokeAsync(string token, CancellationToken cancellationToken)
+        {
+            if (token == null)
+            {
+                return;
+            }
+
+            try
+            {
+                using HttpRequestMessage request = new(HttpMethod.Delete, $"{BaseUrl}/api/v1/token");
+
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+                using HttpResponseMessage response = await Client.SendAsync(request, cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                Logger.Debug?.Print(LogClass.Application, $"[OpenPak] Sign-out did not reach the server: {exception.Message}");
             }
         }
 
@@ -204,11 +290,39 @@ namespace Ryujinx.OpenPak
         {
             using JsonDocument document = await GetAsync("/api/v1/me", cancellationToken);
 
-            if (document == null)
+            return document == null ? null : ReadProfile(document);
+        }
+
+        /// <summary>/me with a token that is not kept yet, to learn whose it is before keeping it.</summary>
+        private async Task<OpenPakProfile> MeAsync(string token, CancellationToken cancellationToken)
+        {
+            try
             {
+                using HttpRequestMessage request = new(HttpMethod.Get, $"{BaseUrl}/api/v1/me");
+
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+                using HttpResponseMessage response = await Client.SendAsync(request, cancellationToken);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+
+                using JsonDocument document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+
+                return ReadProfile(document);
+            }
+            catch (Exception exception)
+            {
+                Logger.Debug?.Print(LogClass.Application, $"[OpenPak] Could not read the new sign-in's account: {exception.Message}");
+
                 return null;
             }
+        }
 
+        private static OpenPakProfile ReadProfile(JsonDocument document)
+        {
             JsonElement root = document.RootElement;
             List<string> platforms = [];
 

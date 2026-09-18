@@ -652,7 +652,8 @@ namespace Ryujinx.Ava.UI.ViewModels
             {
                 Friends.Clear();
 
-                foreach (OpenPakFriend friend in account.Friends)
+                // Whoever is there to play with first; OrderBy is stable, so the server's order holds within each.
+                foreach (OpenPakFriend friend in account.Friends.OrderByDescending(friend => friend.Online))
                 {
                     Friends.Add(new OpenPakFriendModel(friend, NameOf(friend.TitleId)));
                 }

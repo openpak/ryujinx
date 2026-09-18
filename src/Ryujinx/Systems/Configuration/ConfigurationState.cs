@@ -159,6 +159,7 @@ namespace Ryujinx.Ava.Systems.Configuration
                 OpenPakWebsiteUrl = OpenPak.WebsiteUrl,
                 OpenPakRedirectGuestDns = OpenPak.RedirectGuestDns,
                 OpenPakAsked = OpenPak.Asked,
+                OpenPakStartupProfile = OpenPak.StartupProfile,
                 EnableGdbStub = Debug.EnableGdbStub,
                 GdbStubPort = Debug.GdbStubPort,
                 DebuggerSuspendOnStart = Debug.DebuggerSuspendOnStart,
@@ -227,7 +228,8 @@ namespace Ryujinx.Ava.Systems.Configuration
             System.DramSize.Value = MemoryConfiguration.MemoryConfiguration4GiB;
             System.IgnoreMissingServices.Value = false;
             System.IgnoreControllerApplet.Value = false;
-            System.SkipUserProfilesManager.Value = false;
+            // The profile is picked when the emulator opens; a title asking again is the same question twice.
+            System.SkipUserProfilesManager.Value = true;
             System.UseHypervisor.Value = true;
             Multiplayer.LanInterfaceId.Value = "0";
             Multiplayer.Mode.Value = MultiplayerMode.Disabled;
@@ -241,6 +243,7 @@ namespace Ryujinx.Ava.Systems.Configuration
             OpenPak.WebsiteUrl.Value = OpenPakConfig.DefaultWebsiteUrl;
             OpenPak.RedirectGuestDns.Value = true;
             OpenPak.Asked.Value = false;
+            OpenPak.StartupProfile.Value = string.Empty;
             UI.GuiColumns.FavColumn.Value = true;
             UI.GuiColumns.IconColumn.Value = true;
             UI.GuiColumns.AppColumn.Value = true;

@@ -41,6 +41,19 @@
                     MinWidth="200"
                     Content="{ext:Locale Dialog_OpenPak_SettingsOpenWindow}" />
 
+                <StackPanel Margin="10,0,0,0" Orientation="Horizontal">
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        Width="200"
+                        Text="{ext:Locale Dialog_OpenPak_SettingsStartupProfile}"
+                        ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsStartupProfileTooltip}" />
+                    <ComboBox
+                        Width="320"
+                        ItemsSource="{Binding OpenPakStartupLabels}"
+                        SelectedIndex="{Binding OpenPakStartupIndex}"
+                        ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsStartupProfileTooltip}" />
+                </StackPanel>
+
                 <CheckBox Margin="10,0,0,0" IsChecked="{Binding OpenPakRedirectGuestDns}">
                     <TextBlock
                         Text="{ext:Locale Dialog_OpenPak_SettingsRedirectDns}"

@@ -10,10 +10,10 @@
     xmlns:viewModels="clr-namespace:Ryujinx.Ava.UI.ViewModels"
     xmlns:openPak="clr-namespace:Ryujinx.Ava.UI.Views.OpenPak"
     xmlns:helper="clr-namespace:Ryujinx.Common.Helper;assembly=Ryujinx.Common"
-    Width="1000"
-    Height="700"
-    MinWidth="820"
-    MinHeight="520"
+    Width="880"
+    Height="600"
+    MinWidth="760"
+    MinHeight="480"
     WindowStartupLocation="CenterOwner"
     x:DataType="viewModels:OpenPakViewModel"
     mc:Ignorable="d"
@@ -21,6 +21,27 @@
     <Design.DataContext>
         <viewModels:OpenPakViewModel />
     </Design.DataContext>
+    <window:StyleableAppWindow.Styles>
+        <!-- Every page is built from these and nothing else, so they cannot drift apart: a page
+             title, a row's title and its secondary lines, a list row, and a card. -->
+        <Style Selector="TextBlock.page">
+            <Setter Property="FontSize" Value="20" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="TextBlock.title">
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="TextBlock.sub">
+            <Setter Property="Opacity" Value="0.7" />
+        </Style>
+        <Style Selector="Border.row">
+            <Setter Property="Padding" Value="14,8" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+        </Style>
+        <Style Selector="Border.card">
+            <Setter Property="Padding" Value="16" />
+        </Style>
+    </window:StyleableAppWindow.Styles>
     <Grid RowDefinitions="*,Auto">
         <Grid Name="Pages" IsVisible="False">
             <openPak:OpenPakAccountView Name="AccountPage" />
@@ -37,7 +58,7 @@
             IsSettingsVisible="False"
             IsBackEnabled="False"
             Margin="10,0,10,0"
-            OpenPaneLength="200">
+            OpenPaneLength="170">
             <ui:FANavigationView.MenuItems>
                 <ui:FANavigationViewItem
                     IsSelected="True"

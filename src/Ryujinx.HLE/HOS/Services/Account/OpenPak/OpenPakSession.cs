@@ -118,6 +118,52 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 
         private static OpenPakServer Server => OpenPakServer.Current;
 
+        private OpenPakSession()
+        {
+            OpenPakConfig.ProfileChanged += () => _ = SwitchProfileAsync();
+        }
+
+        /// <summary>
+        /// Another local profile is another account, as another user is on a console: the one
+        /// leaving goes offline now rather than at the end of its lease, nothing of it is kept, and
+        /// the one arriving signs in with its own device account. Before anything signed in there
+        /// is nothing to hand over, and the launch signs the first profile in by itself.
+        /// </summary>
+        private async Task SwitchProfileAsync()
+        {
+            if (_userId == null)
+            {
+                return;
+            }
+
+            await _gate.WaitAsync();
+
+            try
+            {
+                await GoOfflineAsync();
+
+                _device = null;
+                _idToken = null;
+                _idTokenExpiry = default;
+                _networkServiceAccountId = 0;
+                _nickname = null;
+                _friendCode = null;
+                _userId = null;
+                _avatarUrl = null;
+                _avatar = null;
+                _applicationToken = null;
+                _invitations = [];
+                _senderNames.Clear();
+                _dismissed.Clear();
+            }
+            finally
+            {
+                _gate.Release();
+            }
+
+            await EnsureAsync(CancellationToken.None);
+        }
+
         /// <summary>
         /// Make sure a usable id_token is cached, fetching one if not. Never throws into the guest:
         /// a game that cannot reach OpenPak should behave like a console that cannot reach Nintendo,
@@ -125,7 +171,9 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         /// </summary>
         public async Task EnsureAsync(CancellationToken cancellationToken)
         {
-            if (!Enabled || Fresh())
+            // No profile open yet means no device account to sign in with: the device account is
+            // the profile's, and one made now would belong to nobody.
+            if (!Enabled || OpenPakConfig.ProfileId.Length == 0 || Fresh())
             {
                 return;
             }
@@ -261,7 +309,7 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             // Presence and the other BAAS API calls after login speak with this token.
             _applicationToken = applicationToken;
 
-            _device ??= DeviceAccount.Load(Server.Key) ?? await CreateDeviceAccountAsync(applicationToken, cancellationToken);
+            _device ??= DeviceAccount.Load(Server.Key, OpenPakConfig.ProfileId) ?? await CreateDeviceAccountAsync(applicationToken, cancellationToken);
 
             bool linking = accountIdToken != null;
 
@@ -314,7 +362,7 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                 Password = account.GetProperty("password").GetString(),
             };
 
-            device.Save(Server.Key);
+            device.Save(Server.Key, OpenPakConfig.ProfileId);
 
             Logger.Info?.Print(LogClass.ServiceAcc, $"[OpenPak] Registered device account {device.Id}");
 
@@ -554,6 +602,13 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                     // Three times inside the lease the server hands out, so one lost request is
                     // not a person blinking offline.
                     await Task.Delay(TimeSpan.FromSeconds(10));
+
+                    // One beat for the life of the process: across a profile switch it speaks for
+                    // whoever is signed in now, and in between for nobody.
+                    if (_userId == null || _device == null)
+                    {
+                        continue;
+                    }
 
                     // The inbox is store-and-forward and changes rarely; every third beat is
                     // often enough to hear about an invitation while the person still cares.
@@ -940,6 +995,24 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             }
         }
 
+        /// <summary>
+        /// A local profile was deleted: its bearer is revoked and its device account forgotten, so
+        /// no sign-in outlives the profile that could show it.
+        /// </summary>
+        public static async Task ForgetProfileAsync(string profileId)
+        {
+            try
+            {
+                DeviceAccount.Delete(profileId);
+
+                await OpenPakApi.Instance.ForgetProfileAsync(profileId, CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                Logger.Warning?.Print(LogClass.ServiceAcc, $"[OpenPak] Could not forget profile {profileId}: {exception.Message}");
+            }
+        }
+
         /// <summary>The BAAS user id is 16 hex digits; the guest wants those 8 bytes as a u64.</summary>
         private static ulong ParseUserId(string id)
             => ulong.TryParse(id, System.Globalization.NumberStyles.HexNumber, null, out ulong value) ? value : 0;
@@ -949,16 +1022,25 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             public string Id { get; init; }
             public string Password { get; init; }
 
-            private static string PathFor(string serverKey)
-                => Path.Combine(AppDataManager.BaseDirPath, "openpak", $"device-{serverKey}.json");
+            private static string PathFor(string serverKey, string profileId = null)
+                => Path.Combine(AppDataManager.BaseDirPath, "openpak",
+                    profileId == null ? $"device-{serverKey}.json" : $"device-{serverKey}-{profileId}.json");
 
             /// <summary>
             /// Kept per server: pointing the emulator at a different OpenPak means a different device
             /// account, and reusing one across servers would send the wrong password to a stranger.
+            /// And per profile, as a console keeps one per user: each profile is its own BAAS user.
             /// </summary>
-            public static DeviceAccount Load(string serverKey)
+            public static DeviceAccount Load(string serverKey, string profileId)
             {
-                string path = PathFor(serverKey);
+                string path = PathFor(serverKey, profileId);
+
+                // From before profiles, one per server: it goes to the profile open at the first
+                // launch since, which is the one whose account it was linked to.
+                if (!File.Exists(path) && File.Exists(PathFor(serverKey)))
+                {
+                    File.Move(PathFor(serverKey), path);
+                }
 
                 if (!File.Exists(path))
                 {
@@ -983,9 +1065,25 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                 }
             }
 
-            public void Save(string serverKey)
+            /// <summary>Forget a deleted profile's device account on every server it had one on.</summary>
+            public static void Delete(string profileId)
             {
-                string path = PathFor(serverKey);
+                string directory = Path.Combine(AppDataManager.BaseDirPath, "openpak");
+
+                if (!Directory.Exists(directory))
+                {
+                    return;
+                }
+
+                foreach (string file in Directory.EnumerateFiles(directory, $"device-*-{profileId}.json"))
+                {
+                    File.Delete(file);
+                }
+            }
+
+            public void Save(string serverKey, string profileId)
+            {
+                string path = PathFor(serverKey, profileId);
 
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
 

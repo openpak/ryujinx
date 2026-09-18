@@ -139,6 +139,34 @@ namespace Ryujinx.OpenPak
             set => Set(ref _redirectGuestDns, value);
         }
 
+        /// <summary>
+        /// The local profile the OpenPak identity belongs to, as the 32 hex digits the account
+        /// service prints a UserId as. Each profile is its own account — its own bearer, its own
+        /// device account — and one is active at a time, like a console with one user signed in.
+        /// Empty until the account manager has opened a profile.
+        /// </summary>
+        public static string ProfileId { get; private set; } = string.Empty;
+
+        /// <summary>The active profile's local name, for saying which profile holds an account.</summary>
+        public static string ProfileName { get; private set; } = string.Empty;
+
+        /// <summary>Raised after the active profile changed; not raised for a rename.</summary>
+        public static event Action ProfileChanged;
+
+        public static void SetProfile(string id, string name)
+        {
+            ProfileName = name ?? string.Empty;
+
+            if (id == ProfileId)
+            {
+                return;
+            }
+
+            ProfileId = id ?? string.Empty;
+
+            ProfileChanged?.Invoke();
+        }
+
         /// <summary>True when there is enough here to try: a server, a CA on disk, and the toggle on.</summary>
         public static bool Configured => Enabled && ResolvedConsoleServer.Length > 0 && File.Exists(CaPath);
 

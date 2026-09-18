@@ -672,7 +672,18 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
         {
             WriteBsdResult(context, -1, LinuxError.EOPNOTSUPP);
 
-            Logger.Stub?.PrintStub(LogClass.ServiceBsd);
+            // Which query is refused decides what to implement: Dinkum's NPLN WebRTC asks every
+            // 2 s while a friend joins, and never gathers a connection candidate (2026-09-18).
+            (ulong mibPosition, ulong mibSize) = context.Request.GetBufferType0x21(0);
+            (_, ulong newSize) = context.Request.GetBufferType0x21(1);
+            (_, ulong oldSize) = context.Request.GetBufferType0x22(0);
+            int[] mib = new int[Math.Min(mibSize / 4, 16)];
+            for (int i = 0; i < mib.Length; i++)
+            {
+                mib[i] = context.Memory.Read<int>(mibPosition + (ulong)i * 4);
+            }
+
+            Logger.Stub?.PrintStub(LogClass.ServiceBsd, $"mib=[{string.Join(",", mib)}] old={oldSize} new={newSize}");
 
             return ResultCode.Success;
         }

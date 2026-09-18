@@ -46,6 +46,7 @@ namespace ARMeilleure.Translation.PTC
         private readonly ManualResetEvent _waitEvent;
 
         private readonly Lock _lock = new();
+        private readonly Lock _saveLock = new();
 
         private bool _disposed;
 
@@ -317,21 +318,40 @@ namespace ARMeilleure.Translation.PTC
 
         private void PreSave()
         {
-            _waitEvent.Reset();
-
-            string fileNameActual = $"{_ptc.CachePathActual}.info";
-            string fileNameBackup = $"{_ptc.CachePathBackup}.info";
-
-            FileInfo fileInfoActual = new(fileNameActual);
-
-            if (fileInfoActual.Exists && fileInfoActual.Length != 0L)
+            // Every timer tick starts a thread; a save that outlasts the interval (a machine deep in swap)
+            // used to overlap the next one, and both copying onto the same backup killed the process.
+            // A tick that finds a save running skips it: the next one writes the same profile.
+            if (!_saveLock.TryEnter())
             {
-                File.Copy(fileNameActual, fileNameBackup, true);
+                return;
             }
 
-            Save(fileNameActual);
+            _waitEvent.Reset();
 
-            _waitEvent.Set();
+            try
+            {
+                string fileNameActual = $"{_ptc.CachePathActual}.info";
+                string fileNameBackup = $"{_ptc.CachePathBackup}.info";
+
+                FileInfo fileInfoActual = new(fileNameActual);
+
+                if (fileInfoActual.Exists && fileInfoActual.Length != 0L)
+                {
+                    File.Copy(fileNameActual, fileNameBackup, true);
+                }
+
+                Save(fileNameActual);
+            }
+            catch (IOException e)
+            {
+                // A profile that misses one save is retried on the next tick; not worth the emulator.
+                Logger.Warning?.Print(LogClass.Ptc, $"Profiling info not saved this time: {e.Message}");
+            }
+            finally
+            {
+                _waitEvent.Set();
+                _saveLock.Exit();
+            }
         }
 
         private void Save(string fileName)

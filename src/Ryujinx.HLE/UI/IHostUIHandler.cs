@@ -1,6 +1,8 @@
 using Ryujinx.HLE.HOS.Applets;
 using Ryujinx.HLE.HOS.Services.Account.Acc;
 using Ryujinx.HLE.HOS.Services.Am.AppletOE.ApplicationProxyService.ApplicationProxy.Types;
+using Ryujinx.OpenPak;
+using System.Collections.Generic;
 
 namespace Ryujinx.HLE.UI
 {
@@ -68,6 +70,14 @@ namespace Ryujinx.HLE.UI
         /// Displays the player select dialog and returns the selected profile.
         /// </summary>
         UserProfile ShowPlayerSelectDialog();
+
+        /// <summary>
+        /// Displays the friend picker for an online-play invitation (MyPage StartFriendInvitation)
+        /// and blocks until it is closed.
+        /// </summary>
+        /// <param name="maxInvitees">How many friends the game allows to be picked, 1 to 16.</param>
+        /// <returns>The friends picked, or null when the person cancelled.</returns>
+        IReadOnlyList<OpenPakFriend> ShowFriendInvitationDialog(int maxInvitees);
         
         /// <summary>
         /// Takes a screenshot from the current renderer and saves it in the screenshots folder.

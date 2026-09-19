@@ -13,6 +13,7 @@ using Ryujinx.HLE.HOS.Kernel.Process;
 using Ryujinx.HLE.HOS.Kernel.Threading;
 using Ryujinx.HLE.HOS.Services;
 using Ryujinx.HLE.HOS.Services.Account.Acc;
+using Ryujinx.HLE.HOS.Services.Am;
 using Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.SystemAppletProxy;
 using Ryujinx.HLE.HOS.Services.Apm;
 using Ryujinx.HLE.HOS.Services.Caps;
@@ -64,6 +65,9 @@ namespace Ryujinx.HLE.HOS
         internal PerformanceState PerformanceState { get; private set; }
 
         internal AppletStateMgr AppletState { get; private set; }
+
+        /// <summary>Where an accepted friend invitation waits for the running application.</summary>
+        public FriendInvitationChannel FriendInvitations { get; private set; }
 
         internal List<NfpDevice> NfpDevices { get; private set; }
 
@@ -180,6 +184,8 @@ namespace Ryujinx.HLE.HOS
             AppletState = new AppletStateMgr(this);
 
             AppletState.SetFocus(true);
+
+            FriendInvitations = new FriendInvitationChannel(KernelContext);
 
             VsyncEvent = new KEvent(KernelContext);
 

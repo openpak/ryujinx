@@ -580,6 +580,9 @@ namespace Ryujinx.Headless
         {
             return AccountSaveDataManager.GetLastUsedUser();
         }
+
+        // Nobody to pick with: the invitation is cancelled, and the game is told so.
+        public IReadOnlyList<Ryujinx.OpenPak.OpenPakFriend> ShowFriendInvitationDialog(int maxInvitees) => null;
         
         public void TakeScreenshot()
         {

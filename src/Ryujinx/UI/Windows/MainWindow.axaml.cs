@@ -62,6 +62,10 @@ namespace Ryujinx.Ava.UI.Windows
         private static bool _startFullscreen;
         private IDisposable _appLibraryAppsSubscription;
 
+        // Invitations already put to the person, so neither the inbox poll nor a game starting
+        // asks about the same one twice.
+        private readonly HashSet<string> _offeredInvitations = [];
+
         public VirtualFileSystem VirtualFileSystem { get; private set; }
         public ContentManager ContentManager { get; private set; }
         public AccountManager AccountManager { get; private set; }
@@ -455,6 +459,21 @@ namespace Ryujinx.Ava.UI.Windows
             // so it is said out loud wherever they are, the same as a friend coming online.
             OpenPakSession.Instance.InvitationArrived += AnnounceInvitation;
 
+            // One that arrived before its game was started is still worth joining once it is.
+            ViewModel.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(MainWindowViewModel.IsGameRunning))
+                {
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        foreach (OpenPakInvitation invitation in OpenPakSession.Instance.Invitations)
+                        {
+                            OfferInvitation(invitation);
+                        }
+                    });
+                }
+            };
+
             // One conditional request per launch, best-effort: the profile decides which names
             // the console redirects, so a title OpenPak adds on a new hostname works without a
             // new build. It is off with the integration, and it never waits for anything.
@@ -571,14 +590,84 @@ namespace Ryujinx.Ava.UI.Windows
             }
         }
 
-        /// <summary>Toast an invitation as it arrives, named the way the game list names titles.</summary>
+        /// <summary>
+        /// An invitation as it arrives: an offer to join when it is for the game running now, and
+        /// otherwise a toast, named the way the game list names titles.
+        /// </summary>
         private void AnnounceInvitation(OpenPakInvitation invitation) => Dispatcher.UIThread.Post(() =>
+        {
+            if (OfferInvitation(invitation))
+            {
+                return;
+            }
+
             NotificationHelper.ShowInformation("OpenPak",
                 LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_NotificationInvitation,
-                    invitation.From,
-                    ViewModel.ApplicationLibrary.Applications.Items.FirstOrDefault(application =>
-                        application.IdString.Equals(invitation.TitleId, StringComparison.OrdinalIgnoreCase))?.Name
-                            ?? invitation.TitleId.ToUpperInvariant())));
+                    invitation.From, TitleName(invitation.TitleId)));
+        });
+
+        private string TitleName(string titleId)
+            => ViewModel.ApplicationLibrary.Applications.Items.FirstOrDefault(application =>
+                application.IdString.Equals(titleId, StringComparison.OrdinalIgnoreCase))?.Name
+                    ?? titleId.ToUpperInvariant();
+
+        /// <summary>
+        /// Ask whether to join, when the invitation is for the title that is running. False when it
+        /// is not, so the caller can say it some other way.
+        /// </summary>
+        private bool OfferInvitation(OpenPakInvitation invitation)
+        {
+            AppHost host = ViewModel.AppHost;
+
+            if (!ViewModel.IsGameRunning || host?.Device?.System == null ||
+                !string.Equals(invitation.TitleId, host.ApplicationId.ToString("x16"), StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (_offeredInvitations.Add(invitation.InvitationId))
+            {
+                _ = JoinOrIgnoreAsync(invitation, host);
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Join is what qlaunch does on accept: [Uid][application_data] into the game's friend
+        /// invitation channel, where the title is polling for it. Either answer marks it read; there
+        /// is no decline on the native surface.
+        /// </summary>
+        private async Task JoinOrIgnoreAsync(OpenPakInvitation invitation, AppHost host)
+        {
+            bool join = await Views.Dialog.OpenPakInvite.AskJoinAsync(invitation.From, TitleName(invitation.TitleId));
+
+            // The game may have been closed while the question was up.
+            if (join && ViewModel.AppHost == host && host.Device?.System != null)
+            {
+                byte[] data = [];
+
+                try
+                {
+                    data = string.IsNullOrEmpty(invitation.ApplicationData) ? [] : Convert.FromBase64String(invitation.ApplicationData);
+                }
+                catch (FormatException)
+                {
+                    Logger.Warning?.Print(LogClass.Application, $"[OpenPak] Invitation {invitation.InvitationId} carries data that is not base64");
+                }
+
+                // The signed-in profile is the invited one; the Uid tells the game which user joins.
+                UserId user = OpenPakConfig.ProfileId.Length == 32
+                    ? new UserId(OpenPakConfig.ProfileId)
+                    : AccountManager.LastOpenedUser.UserId;
+
+                host.Device.System.FriendInvitations.Push(user, data);
+
+                Logger.Info?.Print(LogClass.Application, $"[OpenPak] Joining {invitation.From}'s invitation {invitation.InvitationId}");
+            }
+
+            await OpenPakSession.Instance.DismissInvitationAsync(invitation.InvitationId, CancellationToken.None);
+        }
 
         /// <summary>Toast one presence change, with the title named the way the game list names it.</summary>
         private void AnnounceFriend(OpenPakFriend friend, LocaleKeys key)

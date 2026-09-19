@@ -28,7 +28,6 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletOE.ApplicationProxyService.Applicati
         private long _defaultJournalSaveDataSize = 200000000;
 
         private readonly KEvent _gpuErrorDetectedSystemEvent;
-        private readonly KEvent _friendInvitationStorageChannelEvent;
         private readonly KEvent _notificationStorageChannelEvent;
         private readonly KEvent _healthWarningDisappearedSystemEvent;
         private readonly KEvent _unknownEvent;
@@ -45,18 +44,19 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletOE.ApplicationProxyService.Applicati
 
         private readonly LibHac.HorizonClient _horizon;
         private readonly ulong _pid;
+        private readonly FriendInvitationChannel _friendInvitations;
 
         public IApplicationFunctions(Horizon system, ulong pid)
         {
             // TODO: Find where they are signaled.
             _gpuErrorDetectedSystemEvent = new KEvent(system.KernelContext);
-            _friendInvitationStorageChannelEvent = new KEvent(system.KernelContext);
             _notificationStorageChannelEvent = new KEvent(system.KernelContext);
             _healthWarningDisappearedSystemEvent = new KEvent(system.KernelContext);
             _unknownEvent = new KEvent(system.KernelContext);
 
             _horizon = system.LibHacHorizonManager.AmClient;
             _pid = pid;
+            _friendInvitations = system.FriendInvitations;
         }
 
         [CommandCmif(1)]
@@ -596,7 +596,7 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletOE.ApplicationProxyService.Applicati
         {
             if (_friendInvitationStorageChannelEventHandle == 0)
             {
-                if (context.Process.HandleTable.GenerateHandle(_friendInvitationStorageChannelEvent.ReadableEvent, out _friendInvitationStorageChannelEventHandle) != Result.Success)
+                if (context.Process.HandleTable.GenerateHandle(_friendInvitations.Event.ReadableEvent, out _friendInvitationStorageChannelEventHandle) != Result.Success)
                 {
                     throw new InvalidOperationException("Out of handles!");
                 }
@@ -611,14 +611,18 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletOE.ApplicationProxyService.Applicati
         // TryPopFromFriendInvitationStorageChannel() -> object<nn::am::service::IStorage>
         public ResultCode TryPopFromFriendInvitationStorageChannel(ServiceCtx context)
         {
-            // NOTE: IStorage are pushed in the channel with IApplicationAccessor PushToFriendInvitationStorageChannel
-            //       If _friendInvitationStorageChannelEvent is signaled, the event is cleared.
-            //       If an IStorage is available, returns it with ResultCode.Success.
-            //       If not, just returns ResultCode.NotAvailable. Since we don't support friend feature for now, it's fine to do the same.
+            // Polled every frame by titles that take invitations (Dinkum does), so an empty
+            // channel says nothing: NotAvailable (2128-0002) is how the SDK reads "no invitation".
+            if (!_friendInvitations.TryPop(out byte[] storage))
+            {
+                return ResultCode.NotAvailable;
+            }
 
-            Logger.Stub?.PrintStub(LogClass.ServiceAm);
+            Logger.Info?.Print(LogClass.ServiceAm, $"Friend invitation handed to the application ({storage.Length - 0x10} bytes of data)");
 
-            return ResultCode.NotAvailable;
+            MakeObject(context, new AppletAE.IStorage(storage));
+
+            return ResultCode.Success;
         }
 
         [CommandCmif(150)] // 9.0.0+

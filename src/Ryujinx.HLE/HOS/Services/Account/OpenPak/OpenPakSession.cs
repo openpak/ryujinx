@@ -35,7 +35,7 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
     /// The device account identifies this emulator install, not a person. Its id_token carries an
     /// OpenPak identity only after the account has been linked, which is a separate flow.
     /// </summary>
-    public class OpenPakSession
+    public partial class OpenPakSession
     {
         public static OpenPakSession Instance { get; } = new();
 
@@ -124,6 +124,7 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         private OpenPakSession()
         {
             OpenPakConfig.ProfileChanged += () => _ = SwitchProfileAsync();
+            OpenPakPresence.Changed += () => _ = PublishPresenceAsync();
         }
 
         /// <summary>
@@ -669,14 +670,20 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         /// While a title runs the presence says what is being played, not merely that the
         /// console is on: the friends module reads the four app fields to draw "playing X", and
         /// acdIndex goes over the wire as a JSON number because the console sends it unquoted.
+        ///
+        /// In a title the state is the game's own declaration, as the module derives it: PLAYING
+        /// only while an online-play session is declared open, ONLINE otherwise. appField is
+        /// always sent, "{}" when the game set nothing, as a JSON object inside a JSON string.
         /// </summary>
         private async Task PresenceAsync(string state, CancellationToken cancellationToken)
         {
             string titleId = TitleIDs.CurrentApplication.Value.OrDefault();
 
+            OpenPakPresence.State declared = OpenPakPresence.For(OpenPakConfig.ProfileId, titleId);
+
             string body = state == "OFFLINE" || titleId == null
                 ? $$"""[{"op":"replace","path":"/presence/state","value":"{{state}}"}]"""
-                : $$"""[{"op":"replace","path":"/presence/state","value":"PLAYING"},{"op":"replace","path":"/presence/extras/friends/appInfo:appId","value":"{{titleId}}"},{"op":"replace","path":"/presence/extras/friends/appInfo:presenceGroupId","value":"{{titleId}}"},{"op":"replace","path":"/presence/extras/friends/appInfo:acdIndex","value":0}]""";
+                : $$"""[{"op":"replace","path":"/presence/state","value":"{{(declared.SessionOpen ? "PLAYING" : "ONLINE")}}"},{"op":"replace","path":"/presence/extras/friends/appField","value":{{JsonString(declared.AppField)}}},{"op":"replace","path":"/presence/extras/friends/appInfo:appId","value":"{{titleId}}"},{"op":"replace","path":"/presence/extras/friends/appInfo:presenceGroupId","value":"{{titleId}}"},{"op":"replace","path":"/presence/extras/friends/appInfo:acdIndex","value":0}]""";
 
             using HttpRequestMessage request = new(HttpMethod.Patch,
                 $"https://{BaasHost}/1.0.0/users/{_userId}/device_accounts/{_device.Id}")
@@ -805,7 +812,13 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                 "switch",
                 DateTimeOffset.FromUnixTimeSeconds(
                     item.TryGetProperty("created_at", out JsonElement created) ? created.GetInt64() : 0)
-                        .UtcDateTime + TimeSpan.FromHours(24));
+                        .UtcDateTime + TimeSpan.FromHours(24))
+            {
+                ApplicationData = item.TryGetProperty("application_data", out JsonElement data) &&
+                    data.ValueKind == JsonValueKind.String
+                        ? data.GetString()
+                        : null,
+            };
 
         /// <summary>
         /// Take one off the list and tell the server it has been read, which is all the native
@@ -826,11 +839,10 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 
             try
             {
+                // The friends module's own body (0x1e24b0): a form, ids in decimal, joined by %2C.
                 using HttpRequestMessage request = new(HttpMethod.Patch, $"https://{FiveHost}/v1/invitations")
                 {
-                    Content = new StringContent(
-                        $$"""[{"op":"replace","path":"/{{invitationId}}/extras/receiver/read","value":true}]""",
-                        Encoding.UTF8, "application/json"),
+                    Content = new StringContent($"read=true&ids={invitationId}", Encoding.UTF8, "application/x-www-form-urlencoded"),
                 };
 
                 request.Headers.Add("Authorization", "Bearer " + _applicationToken);

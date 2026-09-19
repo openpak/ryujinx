@@ -3,6 +3,7 @@ using Ryujinx.HLE.HOS.Applets.Browser;
 using Ryujinx.HLE.HOS.Applets.Cabinet;
 using Ryujinx.HLE.HOS.Applets.Dummy;
 using Ryujinx.HLE.HOS.Applets.Error;
+using Ryujinx.HLE.HOS.Applets.MyPage;
 using Ryujinx.HLE.HOS.Services.Am.AppletAE;
 
 namespace Ryujinx.HLE.HOS.Applets
@@ -30,6 +31,8 @@ namespace Ryujinx.HLE.HOS.Applets
                     return new DummyApplet(system);
                 case AppletId.Cabinet:
                     return new CabinetApplet(system);
+                case AppletId.MyPage:
+                    return new MyPageApplet(system);
             }
 
             Logger.Warning?.Print(LogClass.Application, $"Applet {applet} not implemented!");

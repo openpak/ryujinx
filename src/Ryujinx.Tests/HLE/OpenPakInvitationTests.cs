@@ -34,6 +34,7 @@ namespace Ryujinx.Tests.HLE
             Assert.That(invitation.InvitationId, Is.EqualTo("1789287484056138"));
             Assert.That(invitation.TitleId, Is.EqualTo("0100ed9024eb8000"));
             Assert.That(invitation.From, Is.EqualTo("tobagin"));
+            Assert.That(invitation.ApplicationData, Is.EqualTo("AAEAAAD/////AQAAAAAAAAAGAQAAAAZVUVdGSEUL"));
             Assert.That(invitation.ExpiresAt,
                 Is.EqualTo(DateTimeOffset.FromUnixTimeSeconds(1789287484).UtcDateTime.AddHours(24)));
         }

@@ -924,13 +924,19 @@ namespace Ryujinx.OpenPak
 
             foreach (JsonElement friend in list.EnumerateArray())
             {
+                bool online = Boolean(friend, "online");
+
+                // The core says online and nothing about a session, which is ONLINE and not PLAYING.
                 friends.Add(new OpenPakFriend(
                     String(friend, "account_id"),
                     String(friend, "display_name"),
-                    Boolean(friend, "online"),
+                    online,
                     String(friend, "title_id"),
                     String(friend, "namespace"),
-                    Time(friend, "since")));
+                    Time(friend, "since"))
+                {
+                    Status = online ? 1 : 0,
+                });
             }
 
             return friends;
@@ -953,11 +959,15 @@ namespace Ryujinx.OpenPak
             {
                 bool online = false;
                 string titleId = string.Empty;
+                int status = 0;
+                string appField = null;
 
                 if (friend.TryGetProperty("presence", out JsonElement presence))
                 {
                     online = PresenceOnline(presence);
                     titleId = PresenceTitleId(presence);
+                    status = PresenceState(presence);
+                    appField = String(presence, "app_field");
                 }
 
                 friends.Add(new OpenPakFriend(
@@ -970,10 +980,38 @@ namespace Ryujinx.OpenPak
                 {
                     Pid = Number(friend, "pid"),
                     FriendCode = String(friend, "friend_code"),
+                    Status = status,
+                    AppField = appField,
                 });
             }
 
             return friends;
+        }
+
+        /// <summary>
+        /// The presence as the friends module's u8: PLAYING 2, ONLINE 1, anything else 0 — INACTIVE
+        /// included. The adapter's number already is that (0, 1, 2); the core's word is mapped.
+        /// </summary>
+        private static int PresenceState(JsonElement presence)
+        {
+            if (!presence.TryGetProperty("status", out JsonElement status))
+            {
+                return 0;
+            }
+
+            if (status.ValueKind == JsonValueKind.Number)
+            {
+                return status.TryGetInt32(out int code) && code is 1 or 2 ? code : 0;
+            }
+
+            string state = status.ValueKind == JsonValueKind.String ? status.GetString() : null;
+
+            return state?.ToUpperInvariant() switch
+            {
+                "PLAYING" => 2,
+                "ONLINE" => 1,
+                _ => 0,
+            };
         }
 
         /// <summary>
@@ -1006,9 +1044,14 @@ namespace Ryujinx.OpenPak
         {
             if (presence.TryGetProperty("app_id", out JsonElement appId))
             {
-                ulong id = appId.ValueKind == JsonValueKind.String && ulong.TryParse(appId.GetString(), out ulong parsed)
-                    ? parsed
-                    : appId.ValueKind == JsonValueKind.Number && appId.TryGetUInt64(out ulong number) ? number : 0;
+                // Sixteen digits is the "%016llx" the console publishes; a shorter string is a decimal u64.
+                string text = appId.ValueKind == JsonValueKind.String ? appId.GetString() : null;
+
+                ulong id = text != null && (text.Length == 16
+                    ? ulong.TryParse(text, System.Globalization.NumberStyles.HexNumber, null, out ulong parsed)
+                    : ulong.TryParse(text, out parsed))
+                        ? parsed
+                        : appId.ValueKind == JsonValueKind.Number && appId.TryGetUInt64(out ulong number) ? number : 0;
 
                 if (id != 0)
                 {

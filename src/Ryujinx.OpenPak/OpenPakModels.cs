@@ -33,6 +33,15 @@ namespace Ryujinx.OpenPak
 
         /// <summary>Their friend code, when the adapter gave one.</summary>
         public string FriendCode { get; init; }
+
+        /// <summary>
+        /// The presence state as the friends module reads it: 0 offline, 1 online (in a title or
+        /// not), 2 in a declared online-play session. Only 2 passes an OnlinePlay filter.
+        /// </summary>
+        public int Status { get; init; }
+
+        /// <summary>The appField their console last published, a JSON object as a string, or null.</summary>
+        public string AppField { get; init; }
     }
 
     /// <summary>A friend request in either direction; the account id is who it concerns.</summary>
@@ -61,7 +70,14 @@ namespace Ryujinx.OpenPak
         string From,
         string TitleId,
         string Namespace,
-        DateTime ExpiresAt);
+        DateTime ExpiresAt)
+    {
+        /// <summary>
+        /// What the sender's game attached, base64 as the native inbox carries it, or null. The
+        /// receiving game is handed the decoded bytes, never this string.
+        /// </summary>
+        public string ApplicationData { get; init; }
+    }
 
     /// <summary>One stored version of one title's save.</summary>
     public sealed record OpenPakSaveVersion(

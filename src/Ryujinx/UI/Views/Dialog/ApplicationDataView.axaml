@@ -42,10 +42,11 @@
                             HorizontalAlignment="Left"
                             Orientation="Vertical"
                             Spacing="5">
-                    <StackPanel Orientation="Horizontal" IsVisible="{Binding AppData.HasPlayabilityInfo}">
+                    <StackPanel Orientation="Horizontal" Spacing="4" IsVisible="{Binding AppData.HasAnyCompatibilityInfo}">
                         <TextBlock Padding="0, 0, 5, 0" Text="{ext:Locale GameListHeaderCompatibilityStatus}" />
                         <Button
                             Click="PlayabilityStatus_OnClick"
+                            IsVisible="{Binding AppData.HasPlayabilityInfo}"
                             HorizontalContentAlignment="Left"
                             VerticalAlignment="Center"
                             Background="{DynamicResource AppListBackgroundColor}"
@@ -75,6 +76,27 @@
                                     <Setter Property="MinWidth"
                                             Value="0" />
                                     <!-- avoids very wide buttons from the overall project avalonia style -->
+                                </Style>
+                            </Button.Styles>
+                        </Button>
+                        <Button
+                            Click="OpenPakStatus_OnClick"
+                            IsVisible="{Binding AppData.HasOpenPakInfo}"
+                            HorizontalContentAlignment="Left"
+                            VerticalAlignment="Center"
+                            Background="{DynamicResource AppListBackgroundColor}"
+                            ToolTip.Tip="{Binding AppData.OpenPakStatusTooltip}"
+                            Padding="0">
+                            <TextBlock
+                                Margin="1.5"
+                                Text="{Binding AppData.LocalizedOpenPakStatus}"
+                                Foreground="{Binding AppData.OpenPakStatus, Converter={x:Static helpers:PlayabilityStatusConverter.Shared}}"
+                                TextAlignment="Start"
+                                TextWrapping="Wrap" />
+                            <Button.Styles>
+                                <Style Selector="Button">
+                                    <Setter Property="MinWidth"
+                                            Value="0" />
                                 </Style>
                             </Button.Styles>
                         </Button>

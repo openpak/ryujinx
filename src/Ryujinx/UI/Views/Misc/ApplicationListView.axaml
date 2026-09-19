@@ -85,41 +85,64 @@
                                             Text="{Binding Version}"
                                             TextAlignment="Start"
                                             TextWrapping="Wrap" />
-                                        <Button 
-                                            Click="PlayabilityStatus_OnClick" 
-                                            HorizontalContentAlignment="Left"
-                                            VerticalAlignment="Center"
-                                            IsVisible="{Binding HasPlayabilityInfo}"
-                                            Background="{DynamicResource AppListBackgroundColor}"
-                                            Margin="-1, 0, 0, 0"
-                                            Padding="1.5">
-                                            <ToolTip.Tip>
-                                                <StackPanel Orientation="Vertical">
-                                                    <TextBlock 
-                                                        Text="{Binding LocalizedStatusTooltip}" />
-                                                    <Separator 
-                                                        Margin="0, 10, 0, 10" 
-                                                        IsVisible="{Binding HasCompatibilityLabels}" />
-                                                    <TextBlock 
-                                                        IsVisible="{Binding HasCompatibilityLabels}"
-                                                        Text="{Binding FormattedCompatibilityLabels}" />
-                                                </StackPanel>
-                                            </ToolTip.Tip>
-                                            <TextBlock
-                                                Margin="1.5"
-                                                Tag="{Binding IdString}"
-                                                Text="{Binding LocalizedStatus}"
-                                                Foreground="{Binding PlayabilityStatus, Converter={x:Static helpers:PlayabilityStatusConverter.Shared}}"
-                                                TextAlignment="Start"
-                                                TextWrapping="Wrap" />
-                                            <Button.Styles>
-                                                <Style Selector="Button">
-                                                    <Setter Property="MinWidth"
-                                                            Value="0" /> 
-                                <!-- avoids very wide buttons from the overall project avalonia style -->
-                                                </Style>
-                                            </Button.Styles>
-                                        </Button>
+                                        <StackPanel Orientation="Horizontal" Spacing="4">
+                                            <Button 
+                                                Click="PlayabilityStatus_OnClick" 
+                                                HorizontalContentAlignment="Left"
+                                                VerticalAlignment="Center"
+                                                IsVisible="{Binding HasPlayabilityInfo}"
+                                                Background="{DynamicResource AppListBackgroundColor}"
+                                                Margin="-1, 0, 0, 0"
+                                                Padding="1.5">
+                                                <ToolTip.Tip>
+                                                    <StackPanel Orientation="Vertical">
+                                                        <TextBlock 
+                                                            Text="{Binding LocalizedStatusTooltip}" />
+                                                        <Separator 
+                                                            Margin="0, 10, 0, 10" 
+                                                            IsVisible="{Binding HasCompatibilityLabels}" />
+                                                        <TextBlock 
+                                                            IsVisible="{Binding HasCompatibilityLabels}"
+                                                            Text="{Binding FormattedCompatibilityLabels}" />
+                                                    </StackPanel>
+                                                </ToolTip.Tip>
+                                                <TextBlock
+                                                    Margin="1.5"
+                                                    Tag="{Binding IdString}"
+                                                    Text="{Binding LocalizedStatus}"
+                                                    Foreground="{Binding PlayabilityStatus, Converter={x:Static helpers:PlayabilityStatusConverter.Shared}}"
+                                                    TextAlignment="Start"
+                                                    TextWrapping="Wrap" />
+                                                <Button.Styles>
+                                                    <Style Selector="Button">
+                                                        <Setter Property="MinWidth"
+                                                                Value="0" /> 
+                                    <!-- avoids very wide buttons from the overall project avalonia style -->
+                                                    </Style>
+                                                </Button.Styles>
+                                            </Button>
+                                            <Button
+                                                Click="OpenPakStatus_OnClick"
+                                                HorizontalContentAlignment="Left"
+                                                VerticalAlignment="Center"
+                                                IsVisible="{Binding HasOpenPakInfo}"
+                                                Background="{DynamicResource AppListBackgroundColor}"
+                                                ToolTip.Tip="{Binding OpenPakStatusTooltip}"
+                                                Padding="1.5">
+                                                <TextBlock
+                                                    Margin="1.5"
+                                                    Text="{Binding LocalizedOpenPakStatus}"
+                                                    Foreground="{Binding OpenPakStatus, Converter={x:Static helpers:PlayabilityStatusConverter.Shared}}"
+                                                    TextAlignment="Start"
+                                                    TextWrapping="Wrap" />
+                                                <Button.Styles>
+                                                    <Style Selector="Button">
+                                                        <Setter Property="MinWidth"
+                                                                Value="0" />
+                                                    </Style>
+                                                </Button.Styles>
+                                            </Button>
+                                        </StackPanel>
                                     </StackPanel>
                                 </Border>
                                 <StackPanel

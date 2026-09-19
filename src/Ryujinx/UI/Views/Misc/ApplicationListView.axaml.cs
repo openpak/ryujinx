@@ -39,6 +39,9 @@ namespace Ryujinx.Ava.UI.Views.Misc
             await CompatibilityListWindow.Show((string)playabilityLabel.Tag);
         }
         
+        private void OpenPakStatus_OnClick(object sender, RoutedEventArgs e)
+            => Ryujinx.Common.Helper.OpenHelper.OpenUrl($"{Ryujinx.OpenPak.OpenPakConfig.WebsiteUrl.TrimEnd('/')}/titles");
+
         private async void LdnGames_OnClick(object sender, RoutedEventArgs e)
         {
             if (sender is not Button { Content: TextBlock ldnGamesLabel })

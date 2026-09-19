@@ -163,6 +163,9 @@
     <EmbeddedResource Include="..\..\docs\compatibility.csv" LogicalName="RyujinxGameCompatibilityList">
       <Link>Assets\RyujinxGameCompatibility.csv</Link>
     </EmbeddedResource>
+    <EmbeddedResource Include="..\..\docs\openpak-compatibility.csv" LogicalName="OpenPakGameCompatibilityList">
+      <Link>Assets\OpenPakGameCompatibility.csv</Link>
+    </EmbeddedResource>
     <EmbeddedResource Include="..\..\assets\**\*.json">
       <LinkBase>Assets</LinkBase>
     </EmbeddedResource>

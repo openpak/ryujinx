@@ -19,8 +19,8 @@ namespace Ryujinx.Ava.UI.Views.Dialog
     /// offline. The first launch runs it on the profile that is already there; *Add account* on the
     /// startup picker runs it for a new one.
     ///
-    /// A profile signed in here takes the account's name and picture, once — after that the
-    /// profile is the person's own to rename, and nothing keeps them in step.
+    /// A profile signed in here takes the account's picture, once. Its name follows the account's
+    /// on every sign-in (the account manager sees to that), as a linked console user's does.
     /// </summary>
     public static class OpenPakSetup
     {
@@ -184,7 +184,7 @@ namespace Ryujinx.Ava.UI.Views.Dialog
             return result == FAContentDialogResult.Primary && !string.IsNullOrEmpty(name) ? name : null;
         }
 
-        /// <summary>The profile takes the account's name and picture, the way a console's user does when linked.</summary>
+        /// <summary>The profile takes the account's picture, the way a console's user does when linked.</summary>
         private static async Task AdoptAccountAsync(AccountManager accounts)
         {
             UserId profile = accounts.LastOpenedUser.UserId;
@@ -192,13 +192,6 @@ namespace Ryujinx.Ava.UI.Views.Dialog
             try
             {
                 OpenPakProfile me = await OpenPakApi.Instance.MeAsync(CancellationToken.None);
-
-                if (!string.IsNullOrWhiteSpace(me?.DisplayName))
-                {
-                    string name = me.DisplayName.Trim();
-
-                    accounts.SetUserName(profile, name[..Math.Min(name.Length, (int)UserEditorView.MaxProfileNameLength)]);
-                }
 
                 byte[] avatar = await OpenPakApi.Instance.ImageAsync(me?.AvatarUrl, CancellationToken.None);
 
@@ -209,7 +202,7 @@ namespace Ryujinx.Ava.UI.Views.Dialog
             }
             catch (Exception exception)
             {
-                // The profile keeps its own name and picture; being signed in is what mattered.
+                // The profile keeps its own picture; being signed in is what mattered.
                 Logger.Warning?.Print(LogClass.Application, $"[OpenPak] Could not copy the account to the profile: {exception.Message}");
             }
         }

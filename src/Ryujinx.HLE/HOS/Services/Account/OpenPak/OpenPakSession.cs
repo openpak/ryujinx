@@ -116,6 +116,9 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         /// <summary>Raised once for each invitation that was not there at the previous poll.</summary>
         public event Action<OpenPakInvitation> InvitationArrived;
 
+        /// <summary>Raised on each linked sign-in with the profile id it belongs to and the account's nickname.</summary>
+        public event Action<string, string> SignedInAs;
+
         private static OpenPakServer Server => OpenPakServer.Current;
 
         private OpenPakSession()
@@ -343,6 +346,11 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             _avatar = null;
 
             StartHeartbeat();
+
+            if (_nickname != null)
+            {
+                SignedInAs?.Invoke(OpenPakConfig.ProfileId, _nickname);
+            }
 
             Logger.Info?.Print(LogClass.ServiceAcc, _nickname != null
                 ? $"[OpenPak] Signed in as {_nickname} on {Server.Address}"

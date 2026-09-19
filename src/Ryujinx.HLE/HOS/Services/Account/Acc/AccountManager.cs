@@ -39,6 +39,18 @@ namespace Ryujinx.HLE.HOS.Services.Account.Acc
 
             _accountSaveDataManager = new AccountSaveDataManager(_profiles);
 
+            // A linked profile goes by its OpenPak name, as a console user does by its account's.
+            OpenPakSession.Instance.SignedInAs += (profileId, nickname) =>
+            {
+                string name = nickname.Trim();
+                name = name[..Math.Min(name.Length, 0x20)];
+
+                if (_profiles.TryGetValue(profileId, out UserProfile profile) && profile.Name != name)
+                {
+                    SetUserName(profile.UserId, name);
+                }
+            };
+
             if (!_profiles.TryGetValue(DefaultUserId.ToString(), out _))
             {
                 byte[] defaultUserImage = EmbeddedResources.Read("Ryujinx.HLE/HOS/Services/Account/Acc/DefaultUserImage.jpg");

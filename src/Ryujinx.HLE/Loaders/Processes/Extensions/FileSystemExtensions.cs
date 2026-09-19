@@ -16,6 +16,15 @@ namespace Ryujinx.HLE.Loaders.Processes.Extensions
 {
     static class FileSystemExtensions
     {
+        // Builds that crash when their code comes out of the PPTC cache and run fine translated on
+        // demand, keyed by main's build id. Kirby's Dream Buffet 1.0.0 dereferences null in its
+        // script interpreter a few seconds after the intro once the cache is full (every boot);
+        // without PPTC it boots every time. Upstream lists this version as crash / needs update.
+        private static readonly string[] _ptcCrashBuilds =
+        [
+            "82AF4E16BBC0BEC8DF70CD03E99BFC8C37FE8B00", // Kirby's Dream Buffet 1.0.0
+        ];
+
         public static MetaLoader GetNpdm(this IFileSystem fileSystem)
         {
             MetaLoader metaLoader = new();
@@ -109,12 +118,21 @@ namespace Ryujinx.HLE.Loaders.Processes.Extensions
                 device.Configuration.MemoryManagerMode = MemoryManagerMode.SoftwarePageTable;
             }
 
+            bool enablePtc = device.System.EnablePtc;
+
+            if (enablePtc && nsoExecutables.Any(nso => nso.Name == "main" &&
+                    _ptcCrashBuilds.Contains(System.Convert.ToHexString(nso.BuildId.AsSpan()[..20]))))
+            {
+                Logger.Warning?.Print(LogClass.Ptc, "PPTC is off for this build: it crashes when run from the translation cache.");
+                enablePtc = false;
+            }
+
             ProcessResult processResult = ProcessLoaderHelper.LoadNsos(
                 device,
                 device.System.KernelContext,
                 metaLoader,
                 nacpData,
-                device.System.EnablePtc,
+                enablePtc,
                 modLoadResult.Hash,
                 true,
                 programName,

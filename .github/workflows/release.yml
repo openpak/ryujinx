@@ -39,6 +39,9 @@ jobs:
         run: |
           case "$GITHUB_REF" in refs/tags/openpak-v*) echo "version=${GITHUB_REF_NAME#openpak-v}" >> "$GITHUB_OUTPUT" ;; *) echo "version=0.0.0" >> "$GITHUB_OUTPUT" ;; esac
           echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - name: OpenPak compatibility list
+        # From the website's catalogue; an unreachable API or a title without an id fails the build.
+        run: python3 scripts/update-openpak-compatibility.py
       - name: Publish
         run: >
           dotnet publish src/Ryujinx -c Release -r ${{ matrix.rid }} --self-contained -o publish
@@ -89,6 +92,9 @@ jobs:
         run: |
           case "$GITHUB_REF" in refs/tags/openpak-v*) echo "version=${GITHUB_REF_NAME#openpak-v}" >> "$GITHUB_OUTPUT" ;; *) echo "version=0.0.0" >> "$GITHUB_OUTPUT" ;; esac
           echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - name: OpenPak compatibility list
+        # From the website's catalogue; an unreachable API or a title without an id fails the build.
+        run: python3 scripts/update-openpak-compatibility.py
       - name: Publish and bundle
         run: >
           bash distribution/macos/create_macos_pr_build_ava.sh . publish_tmp publish ./distribution/macos/entitlements.xml

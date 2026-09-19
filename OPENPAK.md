@@ -89,7 +89,9 @@ one user signed in. The design is `emulators/prds/emulator-integration-prd.md` Â
   profile as offline, `TrySelectUserWithoutInteraction` picks the active profile rather than the
   first, and a title's own profile picker is skipped by default (System -> *Skip user profiles
   manager*, which is how to get it back);
-- signing in from the setup copies the account's name and avatar into the profile once;
+- a linked profile goes by the account's nickname: every linked sign-in renames it (cut to 32
+  characters), so a local rename lasts only until the next one. Signing in from the setup also
+  copies the account's avatar into the profile, once;
 - an install from before profiles hands its bearer and device account to the profile open at the
   first launch since, so nobody is signed out by the upgrade.
 

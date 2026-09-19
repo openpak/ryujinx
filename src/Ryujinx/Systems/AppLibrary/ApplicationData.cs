@@ -9,6 +9,7 @@ using LibHac.Tools.Fs;
 using LibHac.Tools.FsSystem;
 using LibHac.Tools.FsSystem.NcaUtils;
 using Ryujinx.Ava.Common.Locale;
+using Ryujinx.Ava.Systems.Configuration;
 using Ryujinx.Ava.Systems.PlayReport;
 using Ryujinx.Ava.Utilities;
 using Ryujinx.Common.Configuration;
@@ -39,6 +40,7 @@ namespace Ryujinx.Ava.Systems.AppLibrary
                 _id = value;
 
                 Compatibility = CompatibilityDatabase.Find(value);
+                OpenPakCompatibility = OpenPak.OpenPakCompatibility.Find(IdString);
                 RichPresenceSpec = PlayReports.Analyzer.TryGetSpec(IdString, out GameSpec gameSpec)
                     ? gameSpec
                     : default(Optional<GameSpec>);
@@ -85,6 +87,20 @@ namespace Ryujinx.Ava.Systems.AppLibrary
             => Compatibility.Convert(x => x.FormattedIssueLabels).OrElse(string.Empty);
 
         public LocaleKeys? PlayabilityStatus => Compatibility.Convert(x => x.Status).OrElse(null);
+
+        public (LocaleKeys Status, string Backend)? OpenPakCompatibility { get; private set; }
+
+        public bool HasOpenPakInfo => OpenPakCompatibility.HasValue && ConfigurationState.Instance.OpenPak.Enabled;
+
+        public bool HasAnyCompatibilityInfo => HasPlayabilityInfo || HasOpenPakInfo;
+
+        public LocaleKeys? OpenPakStatus => OpenPakCompatibility?.Status;
+
+        public string LocalizedOpenPakStatus => OpenPakCompatibility is { } c ? LocaleManager.Instance[c.Status] : string.Empty;
+
+        public string OpenPakStatusTooltip => OpenPakCompatibility is { } c
+            ? $"{LocaleManager.Instance[OpenPak.OpenPakCompatibility.Tooltip(c.Status)]}\n\n{c.Backend}"
+            : string.Empty;
 
         public bool HasPtcCacheFiles
         {

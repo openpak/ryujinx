@@ -1,3 +1,4 @@
+using Ryujinx.Common;
 using Ryujinx.Common.Memory;
 using Ryujinx.Horizon.Sdk.Account;
 using Ryujinx.Horizon.Sdk.Friends.Detail.Ipc;
@@ -5,7 +6,10 @@ using Ryujinx.OpenPak;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 
 namespace Ryujinx.Horizon.Sdk.Friends.Detail
 {
@@ -56,11 +60,13 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail
 
         private static bool Matches(OpenPakFriend friend, SizedFriendFilter filter)
         {
+            // By the friends module's status, as the guest will read it back: Online is 1 alone,
+            // OnlinePlay is 2 alone, and a friend in a title without a session is only 1.
             switch (filter.PresenceStatus)
             {
-                case PresenceStatusFilter.Online when !friend.Online:
-                case PresenceStatusFilter.OnlinePlay when !Playing(friend):
-                case PresenceStatusFilter.OnlineOrOnlinePlay when !friend.Online:
+                case PresenceStatusFilter.Online when friend.Status != 1:
+                case PresenceStatusFilter.OnlinePlay when friend.Status != 2:
+                case PresenceStatusFilter.OnlineOrOnlinePlay when friend.Status == 0:
                     return false;
             }
 
@@ -81,13 +87,11 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail
 
             if (filter.IsArbitraryAppPlayedOnly)
             {
-                return Playing(friend);
+                return friend.Online && TitleId(friend) != 0;
             }
 
             return true;
         }
-
-        private static bool Playing(OpenPakFriend friend) => friend.Online && TitleId(friend) != 0;
 
         /// <summary>The title a friend is in, as the u64 the guest speaks, or 0.</summary>
         private static ulong TitleId(OpenPakFriend friend)
@@ -102,27 +106,193 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail
         /// <c>IsValid</c> is what the sysmodule's parser counts, so a friend written without it
         /// is a friend the console will not show — which is precisely how an accepted request
         /// ends up as an empty list on screen.
+        ///
+        /// The Uid at +0 is the caller's own, not the friend's. The presence starts with the
+        /// friend's title; its app-field pairs are only handed over when that title's group is
+        /// the caller's own, as the module zeroes them for a game that is not.
         /// </summary>
-        public static FriendImpl ToFriendImpl(OpenPakFriend friend, Uid userId) => new()
+        public static FriendImpl ToFriendImpl(OpenPakFriend friend, Uid userId)
         {
-            UserId = userId,
-            NetworkUserId = new NetworkServiceAccountId(NetworkId(friend)),
-            Nickname = ToNickname(friend.DisplayName),
-            Presence = new UserPresenceImpl
+            ulong applicationId = TitleId(friend);
+
+            // The presence group goes over the wire as the title id (OpenPakSession publishes it
+            // so), which makes the caller's group its own title.
+            ulong ownGroup = OwnTitleId();
+
+            FriendImpl impl = new()
             {
                 UserId = userId,
-                LastTimeOnlineTimestamp = friend.Since?.ToUnixTimeSecondsOrZero() ?? 0,
-                Status = !friend.Online
-                    ? PresenceStatus.Offline
-                    : TitleId(friend) != 0
-                        ? PresenceStatus.OnlinePlay
-                        : PresenceStatus.Online,
-                SamePresenceGroupApplication = false,
-            },
-            IsFavourite = false,
-            IsNew = false,
-            IsValid = true,
-        };
+                NetworkUserId = new NetworkServiceAccountId(NetworkId(friend)),
+                Nickname = ToNickname(friend.DisplayName),
+                Presence = new FriendPresenceImpl
+                {
+                    ApplicationId = applicationId,
+                    PresenceGroupId = applicationId,
+                    LastUpdateTimestamp = friend.Since?.ToUnixTimeSecondsOrZero() ?? 0,
+                    Status = (PresenceStatus)Math.Clamp(friend.Status, 0, 2),
+                    SamePresenceGroupApplication = applicationId != 0 && applicationId == ownGroup,
+                },
+                IsFavourite = false,
+                IsNew = false,
+                IsValid = true,
+            };
+
+            if (impl.Presence.SamePresenceGroupApplication && friend.Status != 0)
+            {
+                AppFieldToBlob(friend.AppField, impl.Presence.AppKeyValueStorage);
+            }
+
+            return impl;
+        }
+
+        /// <summary>The running title as a u64, or 0 when nothing runs.</summary>
+        public static ulong OwnTitleId()
+            => TitleIDs.CurrentApplication.Value.OrDefault() is { } titleId &&
+                ulong.TryParse(titleId, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ulong id)
+                    ? id
+                    : 0;
+
+        /// <summary>
+        /// A UpdateUserPresence for the signed-in profile, handed to the session that publishes it.
+        /// Other profiles have no account to publish for, and are not kept.
+        /// </summary>
+        public static void Declare(Uid userId, byte declaration, string appField)
+        {
+            if (!AvailableFor(userId))
+            {
+                return;
+            }
+
+            OpenPakPresence.Update(OpenPakConfig.ProfileId, TitleIDs.CurrentApplication.Value.OrDefault(), declaration, appField);
+        }
+
+        /// <summary>
+        /// The 0xC0 key\0value\0 blob as the JSON object the module publishes for appField:
+        /// "{}" when empty, and "{}" when it does not validate — the module sends "" there, but an
+        /// empty appField makes a friend's presence_updated parse fail, and "{}" never does.
+        /// </summary>
+        public static string BlobToAppField(ReadOnlySpan<byte> blob)
+        {
+            List<(string, string)> pairs = [];
+
+            try
+            {
+                while (!blob.IsEmpty && blob[0] != 0)
+                {
+                    int keyEnd = blob.IndexOf((byte)0);
+
+                    if (keyEnd < 0)
+                    {
+                        return "{}";
+                    }
+
+                    string key = Encoding.ASCII.GetString(blob[..keyEnd]);
+
+                    blob = blob[(keyEnd + 1)..];
+
+                    int valueEnd = blob.IndexOf((byte)0);
+
+                    if (valueEnd < 0)
+                    {
+                        return "{}";
+                    }
+
+                    string value = new UTF8Encoding(false, true).GetString(blob[..valueEnd]);
+
+                    blob = blob[(valueEnd + 1)..];
+
+                    if (!ValidKey(key) || pairs.Exists(pair => pair.Item1 == key))
+                    {
+                        return "{}";
+                    }
+
+                    pairs.Add((key, value));
+                }
+            }
+            catch (DecoderFallbackException)
+            {
+                return "{}";
+            }
+
+            using MemoryStream stream = new();
+
+            // Raw UTF-8 rather than \u escapes, as the console writes it.
+            using (Utf8JsonWriter writer = new(stream, new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
+            {
+                writer.WriteStartObject();
+
+                foreach ((string key, string value) in pairs)
+                {
+                    writer.WriteString(key, value);
+                }
+
+                writer.WriteEndObject();
+            }
+
+            return Encoding.UTF8.GetString(stream.ToArray());
+        }
+
+        /// <summary>
+        /// A published appField back into the blob. It must be a JSON object; anything else is
+        /// skipped, as the module's list parser skips it. Pairs that do not fit are left out.
+        /// </summary>
+        private static void AppFieldToBlob(string appField, Span<byte> blob)
+        {
+            if (string.IsNullOrEmpty(appField) || !appField.StartsWith('{') || !appField.EndsWith('}'))
+            {
+                return;
+            }
+
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(appField);
+
+                int offset = 0;
+
+                foreach (JsonProperty property in document.RootElement.EnumerateObject())
+                {
+                    if (property.Value.ValueKind != JsonValueKind.String || !ValidKey(property.Name))
+                    {
+                        continue;
+                    }
+
+                    byte[] key = Encoding.UTF8.GetBytes(property.Name);
+                    byte[] value = Encoding.UTF8.GetBytes(property.Value.GetString());
+
+                    if (offset + key.Length + value.Length + 2 > blob.Length)
+                    {
+                        break;
+                    }
+
+                    key.CopyTo(blob[offset..]);
+                    offset += key.Length + 1;
+                    value.CopyTo(blob[offset..]);
+                    offset += value.Length + 1;
+                }
+            }
+            catch (JsonException)
+            {
+                blob.Clear();
+            }
+        }
+
+        private static bool ValidKey(string key)
+        {
+            if (key.Length == 0)
+            {
+                return false;
+            }
+
+            foreach (char character in key)
+            {
+                if (!char.IsAsciiLetterOrDigit(character) && character != '_')
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
 
         /// <summary>
         /// The id a title will use to refer to this person.

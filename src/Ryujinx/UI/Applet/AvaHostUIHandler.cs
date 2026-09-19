@@ -9,13 +9,16 @@ using Ryujinx.Ava.UI.Helpers;
 using Ryujinx.Ava.UI.ViewModels;
 using Ryujinx.Ava.UI.Windows;
 using Ryujinx.Common;
+using Ryujinx.Common.Logging;
 using Ryujinx.HLE;
 using Ryujinx.HLE.HOS.Applets;
 using Ryujinx.HLE.HOS.Applets.SoftwareKeyboard;
 using Ryujinx.HLE.HOS.Services.Account.Acc;
 using Ryujinx.HLE.HOS.Services.Am.AppletOE.ApplicationProxyService.ApplicationProxy.Types;
 using Ryujinx.HLE.UI;
+using Ryujinx.OpenPak;
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading;
@@ -328,6 +331,39 @@ namespace Ryujinx.Ava.UI.Applet
             return profile;
         }
         
+        public IReadOnlyList<OpenPakFriend> ShowFriendInvitationDialog(int maxInvitees)
+        {
+            ManualResetEvent dialogCloseEvent = new(false);
+
+            IReadOnlyList<OpenPakFriend> picked = null;
+
+            Dispatcher.UIThread.InvokeAsync(async () =>
+            {
+                try
+                {
+                    _parent.ViewModel.AppHost?.NpadManager.BlockInputUpdates();
+
+                    picked = await Views.Dialog.OpenPakInvite.PickFriendsAsync(maxInvitees, titleId =>
+                        _parent.ViewModel.ApplicationLibrary.Applications.Items.FirstOrDefault(application =>
+                            application.IdString.Equals(titleId, StringComparison.OrdinalIgnoreCase))?.Name
+                                ?? titleId.ToUpperInvariant());
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning?.Print(LogClass.Application, $"Friend invitation picker failed: {ex.Message}");
+                }
+                finally
+                {
+                    dialogCloseEvent.Set();
+                }
+            });
+
+            dialogCloseEvent.WaitOne();
+            _parent.ViewModel.AppHost?.NpadManager.UnblockInputUpdates();
+
+            return picked;
+        }
+
         public void TakeScreenshot()
         {
             _parent.ViewModel.AppHost.ScreenshotRequested = true;

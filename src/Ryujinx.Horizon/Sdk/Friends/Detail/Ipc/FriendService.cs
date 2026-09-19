@@ -277,6 +277,8 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
 
             _accountManager.OpenUserOnlinePlay(userId);
 
+            OpenPakFriends.Declare(userId, 1, null);
+
             return Result.Success;
         }
 
@@ -292,6 +294,8 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
 
             _accountManager.CloseUserOnlinePlay(userId);
 
+            OpenPakFriends.Declare(userId, 2, null);
+
             return Result.Success;
         }
 
@@ -302,7 +306,19 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             ulong pidPlaceholder,
             [ClientProcessId] ulong pid)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, userPresence, pidPlaceholder, pid });
+            if (userId.IsNull)
+            {
+                return FriendResult.InvalidArgument;
+            }
+
+            // Commit: the declaration byte and the whole blob, published as PLAYING/ONLINE and an
+            // appField object by the session, and only when one of them changed.
+            string appField = OpenPakFriends.BlobToAppField(userPresence.AppKeyValueStorage);
+
+            Logger.Debug?.Print(LogClass.ServiceFriend,
+                $"UpdateUserPresence: declaration {userPresence.OnlinePlayDeclaration}, appField {appField}");
+
+            OpenPakFriends.Declare(userId, userPresence.OnlinePlayDeclaration, appField);
 
             return Result.Success;
         }

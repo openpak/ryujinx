@@ -27,6 +27,7 @@ namespace Ryujinx.OpenPak
         private const string ServerVariable = "OPENPAK_SERVER";
         private const string CaVariable = "OPENPAK_CA";
         private const string WebsiteVariable = "OPENPAK_WEBSITE";
+        private const string StatusVariable = "OPENPAK_STATUS";
 
         public const string DefaultWebsiteUrl = "https://openpak.org";
 
@@ -119,6 +120,31 @@ namespace Ryujinx.OpenPak
                 int slash = website.IndexOf('/');
 
                 return slash >= 0 ? website[..slash] : website;
+            }
+        }
+
+        /// <summary>
+        /// The status box, which is deliberately not the site: it lives on another machine so it
+        /// can still answer when the one it watches cannot. A deployment that renames the site
+        /// renames this with it — `status.` in front of the site's host — and OPENPAK_STATUS wins
+        /// over both.
+        /// </summary>
+        public static string StatusUrl
+        {
+            get
+            {
+                if (Environment.GetEnvironmentVariable(StatusVariable)?.Trim() is { Length: > 0 } fromEnvironment)
+                {
+                    return fromEnvironment.TrimEnd('/');
+                }
+
+                string website = WebsiteUrl;
+
+                int scheme = website.IndexOf("://", StringComparison.Ordinal);
+
+                return scheme < 0
+                    ? "status." + website
+                    : website[..(scheme + 3)] + "status." + website[(scheme + 3)..];
             }
         }
 

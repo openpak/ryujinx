@@ -91,6 +91,36 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         /// <summary>An OpenPak server is configured and reachable enough to have been set up.</summary>
         public bool Enabled => Server != null;
 
+        /// <summary>Whether the beat that keeps this account online is running.</summary>
+        public bool Beating => _heartbeat != null && _userId != null;
+
+        /// <summary>
+        /// The presence word the server was last told — INACTIVE, ONLINE or PLAYING — or null when
+        /// none has gone out. Read back off the published body rather than kept a second time:
+        /// what the server was told is the only presence this session has.
+        /// </summary>
+        public string PresenceState
+        {
+            get
+            {
+                const string Marker = "\"/presence/state\",\"value\":\"";
+
+                string published = _publishedPresence;
+                int start = published?.IndexOf(Marker, StringComparison.Ordinal) ?? -1;
+
+                if (start < 0)
+                {
+                    return null;
+                }
+
+                start += Marker.Length;
+
+                int end = published.IndexOf('"', start);
+
+                return end < 0 ? null : published[start..end];
+            }
+        }
+
         /// <summary>The id_token OpenPak issued, or null when there is none to give.</summary>
         public string IdToken => _idToken;
 
@@ -164,6 +194,12 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                 _applicationToken = null;
                 _invitations = [];
                 _senderNames.Clear();
+
+                lock (_senderAvatars)
+                {
+                    _senderAvatars.Clear();
+                }
+
                 _dismissed.Clear();
                 _publishedPresence = null;
 
@@ -654,9 +690,11 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                         await SyncModuleCachesAsync();
                     }
 
-                    // Presence goes out on a change and on nothing else, as the module publishes
-                    // it; this only carries one that did not reach the server the first time.
-                    await PublishPresenceAsync();
+                    // Presence goes out on a change, as the module publishes it -- and once
+                    // every third beat regardless, because the server's claim is leased and a
+                    // person who has not changed game in two minutes would otherwise read as
+                    // offline while sitting in front of the machine.
+                    await PublishPresenceAsync(tick % 3 == 0);
                 }
             });
         }
@@ -872,20 +910,53 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         /// shown as having: it prunes on the same clock.
         /// </summary>
         public static OpenPakInvitation InvitationOf(JsonElement item, string senderName)
-            => new(
+        {
+            long createdAt = item.TryGetProperty("created_at", out JsonElement created) ? created.GetInt64() : 0;
+            DateTime sent = DateTimeOffset.FromUnixTimeSeconds(createdAt).UtcDateTime;
+
+            return new OpenPakInvitation(
                 item.GetProperty("id").GetUInt64().ToString(),
                 senderName,
                 item.GetProperty("application_id").GetString(),
                 "switch",
-                DateTimeOffset.FromUnixTimeSeconds(
-                    item.TryGetProperty("created_at", out JsonElement created) ? created.GetInt64() : 0)
-                        .UtcDateTime + TimeSpan.FromHours(24))
+                sent + TimeSpan.FromHours(24))
             {
                 ApplicationData = item.TryGetProperty("application_data", out JsonElement data) &&
                     data.ValueKind == JsonValueKind.String
                         ? data.GetString()
                         : null,
+                SenderId = item.TryGetProperty("sender_id", out JsonElement sender) &&
+                    sender.ValueKind == JsonValueKind.String
+                        ? sender.GetString()
+                        : null,
+                CreatedAt = createdAt == 0 ? null : sent,
+                Messages = MessagesOf(item),
             };
+        }
+
+        /// <summary>
+        /// The words the sender's game wrote, by language tag (invitations doc §2a `messages`). A
+        /// slot the game left empty is not a message, so it is not kept.
+        /// </summary>
+        private static IReadOnlyDictionary<string, string> MessagesOf(JsonElement item)
+        {
+            Dictionary<string, string> messages = new();
+
+            if (!item.TryGetProperty("messages", out JsonElement written) || written.ValueKind != JsonValueKind.Object)
+            {
+                return messages;
+            }
+
+            foreach (JsonProperty message in written.EnumerateObject())
+            {
+                if (message.Value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(message.Value.GetString()))
+                {
+                    messages[message.Name] = message.Value.GetString();
+                }
+            }
+
+            return messages;
+        }
 
         /// <summary>
         /// Take one off the list and tell the server it has been read, which is all the native
@@ -944,17 +1015,20 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                 return cached;
             }
 
+            BaasUser user = await SenderUserAsync(senderId, cancellationToken);
+
+            return string.IsNullOrEmpty(user?.Nickname) ? null : _senderNames[senderId] = user.Nickname;
+        }
+
+        /// <summary>The BAAS user behind an id, by the users filter (§A.7). Null when nobody answers.</summary>
+        private async Task<BaasUser> SenderUserAsync(string senderId, CancellationToken cancellationToken)
+        {
             try
             {
                 using JsonDocument found = await GetAsync(
                     $"https://{BaasHost}/1.0.0/users?filter.id.$in={Uri.EscapeDataString(senderId)}", cancellationToken);
 
-                BaasUser user = OpenPakBaas.ParseUsers(found.RootElement).FirstOrDefault();
-
-                if (!string.IsNullOrEmpty(user?.Nickname))
-                {
-                    return _senderNames[senderId] = user.Nickname;
-                }
+                return OpenPakBaas.ParseUsers(found.RootElement).FirstOrDefault();
             }
             catch (Exception exception)
             {

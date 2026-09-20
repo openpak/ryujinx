@@ -28,6 +28,9 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         private readonly Dictionary<string, (string Id, string ThumbnailUrl)> _friendUsers = new();
         private readonly Dictionary<string, byte[]> _friendAvatars = new();
 
+        // BAAS user id → their picture, once fetched; null when they have none.
+        private readonly Dictionary<string, byte[]> _senderAvatars = new();
+
         /// <summary>
         /// The BAAS user id an invitation to this friend is addressed to, or null when the friend
         /// has no friend code or the lookup finds nobody.
@@ -96,6 +99,63 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 
                 return null;
             }
+        }
+
+        /// <summary>
+        /// The picture of whoever sent an invitation, by their BAAS user id. The friend list
+        /// carries one for everybody on it, so a friend's invitation costs no lookup at all;
+        /// anybody else goes through the users filter the sender's name came from. Fetched once
+        /// per sender. Null when there is no picture, or none that can be fetched.
+        /// </summary>
+        public async Task<byte[]> SenderAvatarAsync(string senderId, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrEmpty(senderId))
+            {
+                return null;
+            }
+
+            lock (_senderAvatars)
+            {
+                if (_senderAvatars.TryGetValue(senderId, out byte[] cached))
+                {
+                    return cached;
+                }
+            }
+
+            string url = null;
+
+            if (OpenPakBaas.TryHexText(senderId, out ulong id))
+            {
+                url = OpenPakBaas.Friend(id)?.ThumbnailUrl ?? OpenPakBaas.User(id)?.ThumbnailUrl;
+            }
+
+            url ??= (await SenderUserAsync(senderId, cancellationToken))?.ThumbnailUrl;
+
+            byte[] avatar = null;
+
+            if (url != null)
+            {
+                try
+                {
+                    avatar = await _http.GetByteArrayAsync(url, cancellationToken);
+                }
+                catch (Exception exception)
+                {
+                    Logger.Debug?.Print(LogClass.ServiceAcc, $"[OpenPak] Could not fetch {senderId}'s picture: {exception.Message}");
+                }
+            }
+
+            // A sender who has no picture is remembered as having none, so their invitations cost
+            // one lookup between them. A fetch that failed is not remembered: that is the network.
+            if (avatar != null || url == null)
+            {
+                lock (_senderAvatars)
+                {
+                    _senderAvatars[senderId] = avatar;
+                }
+            }
+
+            return avatar;
         }
 
         private async Task<(string Id, string ThumbnailUrl)?> FriendUserAsync(string friendCode, CancellationToken cancellationToken)

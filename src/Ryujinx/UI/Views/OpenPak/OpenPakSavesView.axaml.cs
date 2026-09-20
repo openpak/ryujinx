@@ -65,5 +65,29 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
                 await Model.UploadSaveAsync(row.Application);
             }
         }
+
+        /// <summary>
+        /// Clear the title's cloud save. Asked about, and the question says how many versions go
+        /// and that the save on this machine is not one of them: the cloud copy is the only one
+        /// of the two that nobody can get back.
+        /// </summary>
+        private async void OnDelete(object sender, RoutedEventArgs args)
+        {
+            if (Model == null || (sender as Control)?.DataContext is not OpenPakSaveModel row)
+            {
+                return;
+            }
+
+            bool delete = await ContentDialogHelper.CreateChoiceDialog(
+                LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
+                LocaleManager.Instance.UpdateAndGetDynamicValue(
+                    LocaleKeys.Dialog_OpenPak_SavesDeleteConfirm, row.TitleName, row.VersionCount),
+                string.Empty);
+
+            if (delete)
+            {
+                await Model.DeleteSaveAsync(row);
+            }
+        }
     }
 }

@@ -5,5 +5,8 @@ namespace Ryujinx.Horizon.Sdk.Friends
     [StructLayout(LayoutKind.Sequential, Size = 0x8, Pack = 0x8)]
     struct RequestId
     {
+        public ulong Id;
+
+        public override string ToString() => Id.ToString("x16");
     }
 }

@@ -4,6 +4,7 @@ using Ryujinx.Horizon.Sdk.Account;
 using Ryujinx.Horizon.Sdk.Friends.Detail.Ipc;
 using Ryujinx.OpenPak;
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -21,33 +22,33 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail
     /// list expects an answer in microseconds, and one answered with an HTTP round trip stutters
     /// or gives up. The cache is kept warm on a timer instead.
     /// </summary>
-    static class OpenPakFriends
+    static partial class OpenPakFriends
     {
-        /// <summary>Whether there is an account to project at all.</summary>
-        public static bool Available => OpenPakAccount.Instance.SignedIn;
+        /// <summary>
+        /// Whether this profile has a signed-in BAAS user whose friends can be served. The friend
+        /// graph the guest sees is the server's (contract §A.1) and nothing else: every id in it is
+        /// the BAAS user id the same server answers requests, invitations and relationships by.
+        /// </summary>
+        public static bool AvailableFor(Uid userId) => OpenPakBaas.Ready && userId.ToString() == OpenPakConfig.ProfileId;
+
+        /// <summary>Whether a friend list has been fetched for this profile at all (10120).</summary>
+        public static bool ListAvailableFor(Uid userId) => AvailableFor(userId) && OpenPakBaas.FriendListAvailable;
 
         /// <summary>
-        /// Whether that profile is the one signed in. The account is the active profile's; any
-        /// other profile a title asks about is offline and has no friends to be served.
+        /// The friends that pass <paramref name="filter"/>, in the server's own order so that
+        /// paging by <paramref name="offset"/> is stable between calls.
         /// </summary>
-        public static bool AvailableFor(Uid userId) => Available && userId.ToString() == OpenPakConfig.ProfileId;
-
-        /// <summary>
-        /// The friends of the signed-in account that pass <paramref name="filter"/>, oldest-first
-        /// so that paging by <paramref name="offset"/> is stable between calls.
-        /// </summary>
-        public static List<OpenPakFriend> Filtered(SizedFriendFilter filter, int offset)
+        public static List<BaasFriend> Filtered(SizedFriendFilter filter, int offset)
         {
-            List<OpenPakFriend> friends = [];
+            ulong ownGroup = OwnPresenceGroupId();
+            List<BaasFriend> friends = [];
 
-            foreach (OpenPakFriend friend in OpenPakAccount.Instance.Friends)
+            foreach (BaasFriend friend in OpenPakBaas.Friends)
             {
-                if (!Matches(friend, filter))
+                if (Matches(friend, filter, ownGroup))
                 {
-                    continue;
+                    friends.Add(friend);
                 }
-
-                friends.Add(friend);
             }
 
             if (offset > 0)
@@ -58,92 +59,119 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail
             return friends;
         }
 
-        private static bool Matches(OpenPakFriend friend, SizedFriendFilter filter)
+        /// <summary>The FriendFilter, as the module applies it (presence doc §3.2).</summary>
+        private static bool Matches(BaasFriend friend, SizedFriendFilter filter, ulong ownGroup)
         {
-            // By the friends module's status, as the guest will read it back: Online is 1 alone,
-            // OnlinePlay is 2 alone, and a friend in a title without a session is only 1.
+            // Online is 1 alone, OnlinePlay is 2 alone: a friend in a title without a declared
+            // session is only ever 1, and a game asking for 2 must not be told otherwise.
             switch (filter.PresenceStatus)
             {
-                case PresenceStatusFilter.Online when friend.Status != 1:
-                case PresenceStatusFilter.OnlinePlay when friend.Status != 2:
-                case PresenceStatusFilter.OnlineOrOnlinePlay when friend.Status == 0:
+                case PresenceStatusFilter.Online when friend.State != 1:
+                case PresenceStatusFilter.OnlinePlay when friend.State != 2:
+                case PresenceStatusFilter.OnlineOrOnlinePlay when friend.State == 0:
                     return false;
             }
 
-            // The core has no per-viewer favourite flag yet, so a favourites-only request can
-            // only honestly answer "none". Returning the whole list instead would put people in
-            // a list the person never chose to put them in.
-            if (filter.IsFavoriteOnly)
+            if (filter.IsFavoriteOnly && !friend.IsFavorite)
             {
                 return false;
             }
 
-            // PresenceGroupId carries the title a same-app filter is asking about. Friends on
-            // another title, or on none, are not in that group.
-            if ((filter.IsSameAppPresenceOnly || filter.IsSameAppPlayedOnly) && filter.PresenceGroupId != 0)
+            // The same-app filters compare against the caller's own presence group, not against
+            // anything in the filter; only the arbitrary-app one names a group of its own.
+            bool inOwnGroup = friend.ApplicationId != 0 && friend.PresenceGroupId == ownGroup;
+
+            if (filter.IsSameAppPresenceOnly && !inOwnGroup)
             {
-                return TitleId(friend) == filter.PresenceGroupId;
+                return false;
             }
 
-            if (filter.IsArbitraryAppPlayedOnly)
+            if (filter.IsSameAppPlayedOnly && !inOwnGroup && !Played(friend, ownGroup))
             {
-                return friend.Online && TitleId(friend) != 0;
+                return false;
+            }
+
+            if (filter.IsArbitraryAppPlayedOnly &&
+                !(friend.ApplicationId != 0 && friend.PresenceGroupId == filter.PresenceGroupId) &&
+                !Played(friend, filter.PresenceGroupId))
+            {
+                return false;
             }
 
             return true;
         }
 
-        /// <summary>The title a friend is in, as the u64 the guest speaks, or 0.</summary>
-        private static ulong TitleId(OpenPakFriend friend)
-            => !string.IsNullOrEmpty(friend.TitleId) &&
-                ulong.TryParse(friend.TitleId, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ulong id)
-                    ? id
-                    : 0;
+        /// <summary>Whether that presence group appears in the friend's play log (§A.1).</summary>
+        private static bool Played(BaasFriend friend, ulong presenceGroupId)
+        {
+            if (presenceGroupId == 0)
+            {
+                return false;
+            }
+
+            foreach (BaasPlayLog entry in friend.PlayLog)
+            {
+                if (entry.PresenceGroupId == presenceGroupId)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         /// <summary>
-        /// One friend as the guest's struct.
+        /// One friend as the guest's struct (contract §B.3, presence doc §3.2).
         ///
-        /// <c>IsValid</c> is what the sysmodule's parser counts, so a friend written without it
-        /// is a friend the console will not show — which is precisely how an accepted request
-        /// ends up as an empty list on screen.
+        /// <c>IsValid</c> is what the sysmodule's parser counts, so a friend written without it is
+        /// a friend the console will not show. The Uid at +0 is the caller's own, not the friend's.
         ///
-        /// The Uid at +0 is the caller's own, not the friend's. The presence starts with the
-        /// friend's title; its app-field pairs are only handed over when that title's group is
-        /// the caller's own, as the module zeroes them for a game that is not.
+        /// A friend whose status is 0 carries only the time — and the title, when that time is
+        /// known — and never the blob. The blob is zeroed for a caller outside the friend's
+        /// presence group unless the port carries the viewer bit, which friend:u and friend:s do
+        /// not.
         /// </summary>
-        public static FriendImpl ToFriendImpl(OpenPakFriend friend, Uid userId)
+        public static FriendImpl ToFriendImpl(BaasFriend friend, Uid userId, bool viewer)
         {
-            ulong applicationId = TitleId(friend);
+            ulong ownGroup = OwnPresenceGroupId();
+            bool playing = friend.State != 0;
+            bool known = playing || friend.UpdatedAt > 0;
 
-            // The presence group goes over the wire as the title id (OpenPakSession publishes it
-            // so), which makes the caller's group its own title.
-            ulong ownGroup = OwnTitleId();
+            ulong applicationId = known ? friend.ApplicationId : 0;
+            ulong presenceGroupId = known ? friend.PresenceGroupId : 0;
+            bool sameGroup = applicationId != 0 && presenceGroupId == ownGroup;
 
             FriendImpl impl = new()
             {
                 UserId = userId,
-                NetworkUserId = new NetworkServiceAccountId(NetworkId(friend)),
-                Nickname = ToNickname(friend.DisplayName),
+                NetworkUserId = new NetworkServiceAccountId(friend.Id),
+                Nickname = ToNickname(friend.Nickname),
                 Presence = new FriendPresenceImpl
                 {
                     ApplicationId = applicationId,
-                    PresenceGroupId = applicationId,
-                    LastUpdateTimestamp = friend.Since?.ToUnixTimeSecondsOrZero() ?? 0,
-                    Status = (PresenceStatus)Math.Clamp(friend.Status, 0, 2),
-                    SamePresenceGroupApplication = applicationId != 0 && applicationId == ownGroup,
+                    PresenceGroupId = presenceGroupId,
+                    LastUpdateTimestamp = friend.UpdatedAt,
+                    Status = (PresenceStatus)Math.Clamp(friend.State, 0, 2),
+                    SamePresenceGroupApplication = sameGroup,
                 },
-                IsFavourite = false,
-                IsNew = false,
+                IsFavourite = friend.IsFavorite,
+                IsNew = friend.IsNewly,
                 IsValid = true,
             };
 
-            if (impl.Presence.SamePresenceGroupApplication && friend.Status != 0)
+            if (playing && (sameGroup || viewer))
             {
                 AppFieldToBlob(friend.AppField, impl.Presence.AppKeyValueStorage);
             }
 
             return impl;
         }
+
+        /// <summary>
+        /// The caller's own presence group: the running title's NACP group, which is what the
+        /// module compares a friend's against. 0 when nothing runs.
+        /// </summary>
+        public static ulong OwnPresenceGroupId() => OpenPakPresence.Application().PresenceGroupId;
 
         /// <summary>The running title as a u64, or 0 when nothing runs.</summary>
         public static ulong OwnTitleId()
@@ -295,29 +323,138 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail
         }
 
         /// <summary>
-        /// The id a title will use to refer to this person.
-        ///
-        /// The Switch adapter's pid when it gave one — that is the id every OpenPak title server
-        /// resolves — and otherwise a stable hash of the account id, so a friend who has never
-        /// touched a Switch still gets a consistent identity across sessions rather than a
-        /// different one each launch.
+        /// An in-app screen name as a request route carries it: the UTF-8 name and the
+        /// ASCII language tag.
         /// </summary>
-        private static ulong NetworkId(OpenPakFriend friend)
+        public static (string Name, string Language) ScreenName(InAppScreenName screenName)
         {
-            if (friend.Pid != 0)
+            string language = Encoding.ASCII.GetString(screenName.LanguageCode.Value.AsSpan());
+            int end = language.IndexOf('\0');
+
+            return (screenName.ToString(), end < 0 ? language : language[..end]);
+        }
+
+        /// <summary>
+        /// One friend request as the guest's V1 struct (20201).
+        ///
+        /// <paramref name="listType"/> is the box it came from: 1 sent, 2 received. The
+        /// request id and the other party's id are the BAAS ids the server speaks, so a
+        /// cancel/accept/reject names the same request the box listed.
+        /// </summary>
+        public static FriendRequestImpl ToRequestImpl(BaasRequest request, Uid userId, int listType)
+        {
+            FriendRequestImpl impl = new()
             {
-                return friend.Pid;
+                UserId = userId,
+                RequestId = request.Id,
+                OtherUserId = request.OtherId,
+                Nickname = ToNickname(request.Nickname),
+                ListType = (uint)listType,
+                Channel = (uint)request.Channel,
+                State = (uint)request.State,
+                RouteApplicationId = request.Route?.ApplicationId ?? 0,
+                RoutePresenceGroupId = request.Route?.PresenceGroupId ?? 0,
+                CreatedAt = request.CreatedAt,
+                IsRead = request.Read,
+                IsValid = true,
+            };
+
+            FixedUtf8(impl.ThumbnailUrl, request.ThumbnailUrl);
+            FixedUtf8(impl.RouteName.AsSpan(), request.Route?.Name);
+            FixedUtf8(impl.RouteLanguage.AsSpan(), request.Route?.Language);
+            WriteRoute(request.Route, impl.Union.CatalogId.AsSpan(),
+                impl.Union.MiiName.AsSpan(), impl.Union.MiiImageUrlParam.AsSpan());
+
+            return impl;
+        }
+
+        /// <summary>One friend request as the guest's V2 struct (20202): the route carries acdIndex.</summary>
+        public static FriendRequestImplV2 ToRequestImplV2(BaasRequest request, Uid userId, int listType)
+        {
+            FriendRequestImplV2 impl = new()
+            {
+                UserId = userId,
+                RequestId = request.Id,
+                OtherUserId = request.OtherId,
+                Nickname = ToNickname(request.Nickname),
+                ListType = (uint)listType,
+                Channel = (uint)request.Channel,
+                State = (uint)request.State,
+                RouteApplicationId = request.Route?.ApplicationId ?? 0,
+                RouteAcdIndex = request.Route?.AcdIndex ?? 0,
+                RoutePresenceGroupId = request.Route?.PresenceGroupId ?? 0,
+                CreatedAt = request.CreatedAt,
+                IsRead = request.Read,
+                IsValid = true,
+            };
+
+            FixedUtf8(impl.ThumbnailUrl, request.ThumbnailUrl);
+            FixedUtf8(impl.RouteName.AsSpan(), request.Route?.Name);
+            FixedUtf8(impl.RouteLanguage.AsSpan(), request.Route?.Language);
+            WriteRoute(request.Route, impl.Union.CatalogId.AsSpan(),
+                impl.Union.MiiName.AsSpan(), impl.Union.MiiImageUrlParam.AsSpan());
+
+            return impl;
+        }
+
+        /// <summary>
+        /// The route union: the external catalog id when the request carries one, else the
+        /// NNID Mii data when it carries that, else zeros. The two variants never mix on
+        /// the wire — each send variant writes exactly one.
+        /// </summary>
+        private static void WriteRoute(BaasRoute route, Span<byte> catalog, Span<byte> miiName, Span<byte> miiParam)
+        {
+            if (route == null)
+            {
+                return;
             }
 
-            ulong hash = 1469598103934665603;
-
-            foreach (byte value in Encoding.UTF8.GetBytes(friend.AccountId ?? string.Empty))
+            if (OpenPakBaas.TryCatalogId(route.CatalogId, out ulong hi, out ulong lo))
             {
-                hash = (hash ^ value) * 1099511628211;
+                BinaryPrimitives.WriteUInt64LittleEndian(catalog, hi);
+                BinaryPrimitives.WriteUInt64LittleEndian(catalog[8..], lo);
+
+                return;
             }
 
-            // Never zero: a title reads that as "no account".
-            return hash == 0 ? 1 : hash;
+            FixedUtf8(miiName, route.MiiName);
+            FixedUtf8(miiParam, route.MiiImageUrlParam);
+        }
+
+        /// <summary>
+        /// A string into a fixed char field, truncated on a character boundary with room
+        /// left for the terminator — as the module keeps at most N-1 bytes of an N-byte field.
+        /// </summary>
+        private static void FixedUtf8(Span<byte> destination, string value)
+        {
+            destination.Clear();
+
+            if (string.IsNullOrEmpty(value) || destination.Length < 2)
+            {
+                return;
+            }
+
+            byte[] encoded = Encoding.UTF8.GetBytes(value);
+
+            encoded.AsSpan(0, Fits(encoded, destination.Length - 1)).CopyTo(destination);
+        }
+
+        /// <summary>
+        /// How many of <paramref name="encoded"/>'s bytes fit in <paramref name="limit"/> without
+        /// cutting a character in half. A cut lands mid-sequence when the first byte left out is a
+        /// continuation byte, and only then is anything backed off: a name that fits whole keeps
+        /// its last character, multi-byte or not.
+        /// </summary>
+        private static int Fits(ReadOnlySpan<byte> encoded, int limit)
+        {
+            int length = Math.Min(encoded.Length, limit);
+
+            while (length > 0 && length < encoded.Length && (encoded[length] & 0xC0) == 0x80)
+            {
+                length--;
+            }
+
+            return length;
         }
 
         /// <summary>A display name into the fixed 33-byte field, truncated on a character boundary.</summary>
@@ -329,19 +466,10 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail
 
             // 32 bytes plus the terminator: a name cut mid-sequence would decode to a
             // replacement character on the console rather than to a shorter name.
-            int length = Math.Min(encoded.Length, 32);
-
-            while (length > 0 && (encoded[length - 1] & 0xC0) == 0x80)
-            {
-                length--;
-            }
-
-            encoded.AsSpan(0, length).CopyTo(buffer.AsSpan());
+            encoded.AsSpan(0, Fits(encoded, 32)).CopyTo(buffer.AsSpan());
 
             return new Nickname(buffer);
         }
 
-        private static long ToUnixTimeSecondsOrZero(this DateTime value)
-            => value == default ? 0 : new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc)).ToUnixTimeSeconds();
     }
 }

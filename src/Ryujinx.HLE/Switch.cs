@@ -108,6 +108,13 @@ namespace Ryujinx.HLE
             UpdateVSyncInterval();
 #pragma warning restore IDE0055
 
+            // Presence publishes the running title's NACP presence group, which is the id a
+            // friend's game compares its own against; only the console knows what is running.
+            OpenPak.OpenPakPresence.RunningApplication = () =>
+                Processes.ActiveApplication is { } application
+                    ? (application.ProgramId, application.ApplicationControlProperties.PresenceGroupId)
+                    : (0UL, 0UL);
+
             Shared = this;
         }
 

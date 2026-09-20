@@ -345,6 +345,23 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
 
             int updatedCount = 0;
 
+            // [DIAG] Select is the nn::websocket worker's only wait. Trace what it asks for and
+            // what it gets: without this the whole D2R-services handshake is invisible.
+            static string Describe(PollEvent[] evts, BsdContext ctx, PollEventTypeMask want)
+            {
+                List<string> names = [];
+
+                foreach (PollEvent e in evts)
+                {
+                    if (e.Data.InputEvents.HasFlag(want))
+                    {
+                        names.Add($"{e.Data.SocketFd}{(e.FileDescriptor is EventFileDescriptor ? "e" : "")}");
+                    }
+                }
+
+                return names.Count == 0 ? "-" : string.Join(",", names);
+            }
+
             if (hasEventFd)
             {
                 // A select carrying an event fd is nn::websocket's worker (and anything else with a
@@ -382,6 +399,15 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
                 }
 
                 context.PollResult = updatedCount;
+
+                if (!context.PollForceNonBlocking || updatedCount > 0)
+                {
+                    Logger.Info?.Print(LogClass.ServiceBsd,
+                        $"[DIAG] Select r=[{Describe(events, _context, PollEventTypeMask.Input)}] " +
+                        $"w=[{Describe(events, _context, PollEventTypeMask.Output)}] " +
+                        $"e=[{Describe(events, _context, PollEventTypeMask.Error)}] -> ready={updatedCount}" +
+                        (context.PollForceNonBlocking ? " (after park)" : updatedCount == 0 ? " (parking)" : ""));
+                }
 
                 if (updatedCount == 0)
                 {

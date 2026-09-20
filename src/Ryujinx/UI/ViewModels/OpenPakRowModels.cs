@@ -22,37 +22,129 @@ namespace Ryujinx.Ava.UI.ViewModels
     /// </summary>
     public class OpenPakFriendModel : BaseModel
     {
+        private readonly string _titleId;
+        private readonly byte[] _libraryIcon;
+
         public OpenPakFriendModel(OpenPakFriend friend, string titleName, ApplicationData application = null)
         {
             AccountId = friend.AccountId;
             DisplayName = friend.DisplayName;
             Online = friend.Online;
+            FriendCode = friend.FriendCode;
 
-            // The title only counts while they are on it: a title id left on an offline friend
-            // would put a game beside somebody who is not playing it.
-            TitleIcon = friend.Online ? application?.Icon : null;
+            _titleId = friend.TitleId;
+            _libraryIcon = application?.Icon;
+            _titleName = titleName ?? string.Empty;
 
-            Status = !friend.Online
-                ? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_FriendsOffline]
-                : string.IsNullOrEmpty(titleName)
-                    ? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_FriendsOnline]
-                    : LocaleManager.Instance.UpdateAndGetDynamicValue(
-                        LocaleKeys.Dialog_OpenPak_FriendsPlaying, titleName);
+            // A friend elsewhere carries no app id, by design: there is no game to put beside
+            // them, only the console they are actually on.
+            HasTitle = friend.Online && !string.IsNullOrEmpty(friend.TitleId);
+
+            ConsoleName = OpenPakPlatforms.NameOf(friend.Namespace);
+            ConsoleText = string.IsNullOrEmpty(ConsoleName)
+                ? null
+                : LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_FriendsConsole, ConsoleName);
+
+            SessionSinceText = friend.Since is { } since
+                ? LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_FriendsSessionSince, since.ToLocalTime())
+                : null;
+
+            FriendsSinceText = friend.FriendsSince is { } friendsSince
+                ? LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_FriendsFriendsSince, friendsSince.ToLocalTime())
+                : null;
+
+            FriendCodeText = string.IsNullOrEmpty(FriendCode)
+                ? null
+                : LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_FriendsFriendCode, FriendCode);
+
+            _status = BuildStatus();
         }
 
         public string AccountId { get; }
         public string DisplayName { get; }
         public bool Online { get; }
-        public string Status { get; }
+        public string FriendCode { get; }
+
+        /// <summary>Whether there is a game to show at all: an offline friend or one carrying no app id has none.</summary>
+        public bool HasTitle { get; }
+
+        /// <summary>"Nintendo Switch", "Wii U", ... — empty when the presence named nothing.</summary>
+        public string ConsoleName { get; }
+
+        /// <summary>"On {console}", already worded — null when there is no console to say.</summary>
+        public string ConsoleText { get; }
+        public bool HasConsole => ConsoleText != null;
+
+        /// <summary>When their session began, already worded — null when the presence carried no time.</summary>
+        public string SessionSinceText { get; }
+        public bool HasSessionSince => SessionSinceText != null;
+
+        /// <summary>When this friendship began, already worded — null off a route that carries none.</summary>
+        public string FriendsSinceText { get; }
+        public bool HasFriendsSince => FriendsSinceText != null;
+
+        /// <summary>The friend code, already worded — null for a core friend with none.</summary>
+        public string FriendCodeText { get; }
+        public bool HasFriendCode => FriendCodeText != null;
 
         /// <summary>
-        /// The game they are in, as this machine's own library draws it. Null for a title that is
-        /// not installed here — the line already says its name, and a wrong picture is worse than
-        /// none.
+        /// One line: what a scan of the list needs and nothing else. Offline, playing something
+        /// named, playing something this row could not name, or — a friend elsewhere carries no
+        /// app id by design — the console they are actually on.
         /// </summary>
-        public byte[] TitleIcon { get; }
+        public string Status
+        {
+            get => _status;
+            private set
+            {
+                _status = value;
+                OnPropertyChanged();
+            }
+        }
+        private string _status;
 
-        public bool Playing => TitleIcon != null;
+        /// <summary>
+        /// The game's name: this machine's own library first, then whatever <see cref="LoadGameAsync"/>
+        /// found in the catalogue. Empty until either answers, which reads as "Playing" with no name —
+        /// never the id.
+        /// </summary>
+        public string TitleName
+        {
+            get => _titleName;
+            private set
+            {
+                _titleName = value;
+                OnPropertyChanged();
+            }
+        }
+        private string _titleName;
+
+        /// <summary>Whether there is a resolved name to put a picture and a heading beside.</summary>
+        public bool HasTitleName => HasTitle && !string.IsNullOrEmpty(TitleName);
+
+        /// <summary>The game's picture: this machine's own icon, or the catalogue's. Null until either arrives.</summary>
+        public Bitmap GameIcon
+        {
+            get => _gameIcon;
+            private set
+            {
+                _gameIcon = value;
+                OnPropertyChanged();
+            }
+        }
+        private Bitmap _gameIcon;
+
+        /// <summary>Collapsed by default; a click opens the detail panel in place.</summary>
+        public bool IsExpanded
+        {
+            get => _isExpanded;
+            set
+            {
+                _isExpanded = value;
+                OnPropertyChanged();
+            }
+        }
+        private bool _isExpanded;
 
         /// <summary>Stands in for the avatar until it is here, and for good if it never arrives.</summary>
         public string Initial => string.IsNullOrEmpty(DisplayName)
@@ -105,8 +197,108 @@ namespace Ryujinx.Ava.UI.ViewModels
         private static readonly ConcurrentDictionary<string, Bitmap> _avatars = new();
         private Bitmap _avatar;
 
+        /// <summary>
+        /// The game's name and picture, resolved after the row is already on screen: this
+        /// machine's own library first, and only for what it does not have does this reach for
+        /// the catalogue — the same picture the saves page already draws for a title that is not
+        /// installed here.
+        /// </summary>
+        public async Task LoadGameAsync(CancellationToken cancellationToken)
+        {
+            if (!HasTitle)
+            {
+                return;
+            }
+
+            if (string.IsNullOrEmpty(TitleName))
+            {
+                string name = await OpenPakApi.Instance.CatalogueNameAsync(_titleId, cancellationToken);
+
+                if (!string.IsNullOrEmpty(name))
+                {
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        TitleName = name;
+                        Status = BuildStatus();
+                    });
+                }
+            }
+
+            if (GameIcon != null)
+            {
+                return;
+            }
+
+            Bitmap decoded;
+
+            if (_libraryIcon != null)
+            {
+                decoded = OpenPakImages.Decode(_libraryIcon);
+            }
+            else if (_gameIcons.TryGetValue(_titleId, out Bitmap cached))
+            {
+                decoded = cached;
+            }
+            else
+            {
+                byte[] image = await OpenPakApi.Instance.ImageAsync($"/titles/icon/{_titleId}", cancellationToken);
+
+                decoded = OpenPakImages.Decode(image);
+
+                if (decoded != null)
+                {
+                    decoded = _gameIcons.GetOrAdd(_titleId, decoded);
+                }
+            }
+
+            if (decoded != null)
+            {
+                await Dispatcher.UIThread.InvokeAsync(() => GameIcon = decoded);
+            }
+        }
+
+        private static readonly ConcurrentDictionary<string, Bitmap> _gameIcons = new();
+
+        private string BuildStatus()
+        {
+            if (!Online)
+            {
+                return LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_FriendsOffline];
+            }
+
+            if (HasTitle)
+            {
+                return string.IsNullOrEmpty(TitleName)
+                    ? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_FriendsPlayingUnknown]
+                    : LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_FriendsPlaying, TitleName);
+            }
+
+            // Nothing to play: on this platform that is the plain "online" the friends module
+            // already means by presence 1; on another, it is the console, since there is no
+            // app id to name a game with.
+            bool elsewhere = HasConsole && !string.Equals(ConsoleName, "Nintendo Switch", StringComparison.Ordinal);
+
+            return elsewhere ? ConsoleText : LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_FriendsOnline];
+        }
+
         /// <summary>The presence dot. Green reads as "there", and grey as "not", at a glance.</summary>
         public IBrush PresenceBrush => Online ? OpenPakBrushes.Up : OpenPakBrushes.Down;
+    }
+
+    /// <summary>
+    /// A presence namespace as a person reads it: the consoles OpenPak actually serves by name,
+    /// and whatever else calls itself in, capitalised rather than shown raw.
+    /// </summary>
+    internal static class OpenPakPlatforms
+    {
+        public static string NameOf(string ns) => ns?.Trim().ToLowerInvariant() switch
+        {
+            null or "" => string.Empty,
+            "switch" => "Nintendo Switch",
+            "wiiu" => "Wii U",
+            "3ds" => "Nintendo 3DS",
+            _ => char.ToUpperInvariant(ns.Trim()[0]) + ns.Trim()[1..],
+        };
     }
 
     /// <summary>A pending friend request, in whichever direction it is going.</summary>

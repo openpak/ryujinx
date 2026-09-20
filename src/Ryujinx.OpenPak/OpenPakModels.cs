@@ -42,6 +42,9 @@ namespace Ryujinx.OpenPak
 
         /// <summary>The appField their console last published, a JSON object as a string, or null.</summary>
         public string AppField { get; init; }
+
+        /// <summary>When the friendship began, as the adapter dates it. Null off a route that carries none.</summary>
+        public DateTime? FriendsSince { get; init; }
     }
 
     /// <summary>A friend request in either direction; the account id is who it concerns.</summary>

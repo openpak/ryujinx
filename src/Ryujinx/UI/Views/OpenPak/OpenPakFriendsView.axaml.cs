@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Ryujinx.Ava.Common.Locale;
 using Ryujinx.Ava.UI.Helpers;
@@ -35,6 +36,15 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
         }
 
         private OpenPakViewModel Model => DataContext as OpenPakViewModel;
+
+        /// <summary>A click on the row opens its detail panel in place; a second click closes it again.</summary>
+        private void OnToggleExpand(object sender, TappedEventArgs args)
+        {
+            if ((sender as Control)?.DataContext is OpenPakFriendModel friend)
+            {
+                friend.IsExpanded = !friend.IsExpanded;
+            }
+        }
 
         private async void OnAccept(object sender, RoutedEventArgs args)
         {

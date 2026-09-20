@@ -539,11 +539,19 @@ namespace Ryujinx.Ava.UI.Windows
             // How far each title's online play is served is the site's to say: the list built
             // into this build is only what was true when it was made, and a title promoted since
             // would otherwise read as beta until somebody rebuilt the emulator.
-            if (await Systems.OpenPak.OpenPakCompatibility.RefreshAsync(CancellationToken.None) && _applicationsLoadedOnce)
+            if (await Systems.OpenPak.OpenPakCompatibility.RefreshAsync(CancellationToken.None))
             {
                 // A title promoted since this build was made: the games already drawn carry the
-                // old answer, so they are read again.
-                LoadApplications();
+                // old answer, so they are read again. Nothing drawn yet needs no reload — the
+                // scan that follows reads the site's answer on its own.
+                Logger.Info?.Print(LogClass.Application, _applicationsLoadedOnce
+                    ? "[OpenPak] Catalogue statuses differ from this build, reloading the game list"
+                    : "[OpenPak] Catalogue statuses differ from this build, the first scan will use them");
+
+                if (_applicationsLoadedOnce)
+                {
+                    LoadApplications();
+                }
             }
 
             // A profile that was signed in and has lost its bearer — revoked from the website, or

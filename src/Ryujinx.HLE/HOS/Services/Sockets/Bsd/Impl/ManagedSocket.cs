@@ -401,7 +401,11 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
         // ways. It used to retire after one frame, which hid everything past a
         // TLS hello -- exactly the window worth seeing. Auth tokens ride these
         // frames, so anything looking like a JWT is redacted like server-side.
-        private const int TapFrameLimit = 12;
+        // 12 was sized for a TLS hello. A Pia mesh join takes tens of seconds and
+        // thousands of datagrams, so 12 shows the first half second and then goes
+        // blind over exactly the window that matters. Per-socket, so the NEX
+        // connection cannot spend the P2P socket's budget.
+        private const int TapFrameLimit = 2000;
 
         private int _tapRemaining = TapFrameLimit;
         private IPEndPoint _tapTarget;

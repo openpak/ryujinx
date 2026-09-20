@@ -18,6 +18,10 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
     [Service("bsd:u", false)]
     class IClient : IpcService
     {
+        // How long a select carrying a wakeup event fd parks before it answers "nothing ready".
+        // An eventfd write completes the park immediately, so this only bounds an idle worker.
+        private const int SelectParkWindowMs = 100;
+
         private static readonly List<IPollManager> _pollManagers =
         [
             EventFileDescriptorPollManager.Instance,
@@ -249,45 +253,72 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
             (ulong writeFdsOutBufferPosition, ulong writeFdsOutBufferSize) = context.Request.GetBufferType0x22(1);
             (ulong errorFdsOutBufferPosition, ulong errorFdsOutBufferSize) = context.Request.GetBufferType0x22(2);
 
-            List<IFileDescriptor> readFds = _context.RetrieveFileDescriptorsFromMask(context.Memory.GetSpan(readFdsInBufferPosition, (int)readFdsInBufferSize));
-            List<IFileDescriptor> writeFds = _context.RetrieveFileDescriptorsFromMask(context.Memory.GetSpan(writeFdsInBufferPosition, (int)writeFdsInBufferSize));
-            List<IFileDescriptor> errorFds = _context.RetrieveFileDescriptorsFromMask(context.Memory.GetSpan(errorFdsInBufferPosition, (int)errorFdsInBufferSize));
+            PollEvent[] events;
 
-            int actualFdsCount = readFds.Count + writeFds.Count + errorFds.Count;
+            if (context.PollInputSnapshot != null)
+            {
+                // Deferred re-check: replay the fd sets frozen when this select parked. The guest
+                // buffers above live in the session's shared pointer region, which later bsd IPC
+                // has long since overwritten — same hazard the Poll path documents.
+                int snapshotCount = context.PollInputSnapshot.Length / Unsafe.SizeOf<PollEventData>();
 
-            if (fdsCount == 0 || actualFdsCount == 0)
+                events = new PollEvent[snapshotCount];
+
+                for (int i = 0; i < snapshotCount; i++)
+                {
+                    PollEventData data = System.Runtime.InteropServices.MemoryMarshal.Read<PollEventData>(
+                        context.PollInputSnapshot.AsSpan(i * Unsafe.SizeOf<PollEventData>()));
+
+                    data.OutputEvents = 0;
+
+                    events[i] = new PollEvent(data, _context.RetrieveFileDescriptor(data.SocketFd));
+                }
+            }
+            else
+            {
+                List<IFileDescriptor> readFds = _context.RetrieveFileDescriptorsFromMask(context.Memory.GetSpan(readFdsInBufferPosition, (int)readFdsInBufferSize));
+                List<IFileDescriptor> writeFds = _context.RetrieveFileDescriptorsFromMask(context.Memory.GetSpan(writeFdsInBufferPosition, (int)writeFdsInBufferSize));
+                List<IFileDescriptor> errorFds = _context.RetrieveFileDescriptorsFromMask(context.Memory.GetSpan(errorFdsInBufferPosition, (int)errorFdsInBufferSize));
+
+                int actualFdsCount = readFds.Count + writeFds.Count + errorFds.Count;
+
+                if (fdsCount == 0 || actualFdsCount == 0)
+                {
+                    WriteBsdResult(context, 0);
+
+                    return ResultCode.Success;
+                }
+
+                events = new PollEvent[actualFdsCount];
+
+                int index = 0;
+
+                foreach (IFileDescriptor fd in readFds)
+                {
+                    events[index++] = MakeSelectEvent(fd, PollEventTypeMask.Input);
+                }
+
+                foreach (IFileDescriptor fd in writeFds)
+                {
+                    events[index++] = MakeSelectEvent(fd, PollEventTypeMask.Output);
+                }
+
+                foreach (IFileDescriptor fd in errorFds)
+                {
+                    events[index++] = MakeSelectEvent(fd, PollEventTypeMask.Error);
+                }
+            }
+
+            if (events.Length == 0)
             {
                 WriteBsdResult(context, 0);
 
                 return ResultCode.Success;
             }
 
-            PollEvent[] events = new PollEvent[actualFdsCount];
-
-            int index = 0;
-
-            foreach (IFileDescriptor fd in readFds)
-            {
-                events[index] = new PollEvent(new PollEventData { InputEvents = PollEventTypeMask.Input }, fd);
-
-                index++;
-            }
-
-            foreach (IFileDescriptor fd in writeFds)
-            {
-                events[index] = new PollEvent(new PollEventData { InputEvents = PollEventTypeMask.Output }, fd);
-
-                index++;
-            }
-
-            foreach (IFileDescriptor fd in errorFds)
-            {
-                events[index] = new PollEvent(new PollEventData { InputEvents = PollEventTypeMask.Error }, fd);
-
-                index++;
-            }
-
             List<PollEvent>[] eventsByPollManager = new List<PollEvent>[_pollManagers.Count];
+
+            bool hasEventFd = false;
 
             for (int i = 0; i < eventsByPollManager.Length; i++)
             {
@@ -302,42 +333,138 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
                 }
             }
 
+            foreach (PollEvent evnt in events)
+            {
+                if (evnt.FileDescriptor is EventFileDescriptor)
+                {
+                    hasEventFd = true;
+
+                    break;
+                }
+            }
+
             int updatedCount = 0;
 
-            for (int i = 0; i < _pollManagers.Count; i++)
+            if (hasEventFd)
             {
-                if (eventsByPollManager[i].Count > 0)
+                // A select carrying an event fd is nn::websocket's worker (and anything else with a
+                // wakeup fd). It must never block this thread: the EventFdWrite that makes it ready
+                // is an IPC served by this same single Bsd thread. Take ONE non-blocking pass over
+                // every manager, then either answer now or park the IPC and let the server loop
+                // re-check it — exactly what the Poll path does.
+                for (int i = 0; i < _pollManagers.Count; i++)
                 {
+                    if (eventsByPollManager[i].Count == 0)
+                    {
+                        continue;
+                    }
+
+                    _pollManagers[i].Select(eventsByPollManager[i], 0, out int updatedPollCount);
+
+                    updatedCount += updatedPollCount;
+                }
+
+                // Drain the wakeup we are about to report, so it is edge-triggered: the guest reads
+                // the fd itself, but only once per ready select, and a fd left permanently readable
+                // would mask the socket half of the next round.
+                if (updatedCount > 0)
+                {
+                    Span<byte> drainTmp = stackalloc byte[8];
+
+                    foreach (PollEvent evnt in events)
+                    {
+                        if (evnt.FileDescriptor is EventFileDescriptor eventFd &&
+                            evnt.Data.OutputEvents.HasFlag(PollEventTypeMask.Input))
+                        {
+                            eventFd.Read(out _, drainTmp);
+                        }
+                    }
+                }
+
+                context.PollResult = updatedCount;
+
+                if (updatedCount == 0)
+                {
+                    if (!context.PollForceNonBlocking)
+                    {
+                        context.PollDeferRequested = true;
+
+                        // ponytail: fixed park window rather than the request's timeval. The raw
+                        // argument here is a 16-byte nn::socket::TimeVal that this IPC reads as one
+                        // int32, so its value cannot be trusted; a bounded park is legal either way
+                        // (select is allowed to return 0 early) and an eventfd write completes the
+                        // park long before the window elapses. Decode the timeval if a title ever
+                        // needs a true deadline.
+                        context.PollDeadlineMs = PerformanceCounter.ElapsedMilliseconds + SelectParkWindowMs;
+
+                        byte[] snapshot = new byte[events.Length * Unsafe.SizeOf<PollEventData>()];
+
+                        for (int i = 0; i < events.Length; i++)
+                        {
+                            System.Runtime.InteropServices.MemoryMarshal.Write(
+                                snapshot.AsSpan(i * Unsafe.SizeOf<PollEventData>()), events[i].Data);
+                        }
+
+                        context.PollInputSnapshot = snapshot;
+
+                        // Leave empty fd sets behind while parked. nn::websocket reads them with
+                        // FD_ISSET without looking at select's return value, so a park that ends in a
+                        // timeout must not hand it whatever bytes happened to be in that buffer. Done
+                        // here, on the live IPC, rather than on a re-check, where the output buffer
+                        // may already belong to another request.
+                        ClearFdSet(context, readFdsOutBufferPosition, readFdsOutBufferSize);
+                        ClearFdSet(context, writeFdsOutBufferPosition, writeFdsOutBufferSize);
+                        ClearFdSet(context, errorFdsOutBufferPosition, errorFdsOutBufferSize);
+
+                        // Return WITHOUT writing a response, like Poll: ServerBase registers the park.
+                        return ResultCode.Success;
+                    }
+
+                    // Re-check with nothing ready. Do not touch the guest fd sets — the output
+                    // buffers sit in the shared pointer region another IPC may be using right now.
+                    // If the deadline has passed ServerBase delivers this as a plain select timeout.
+                    return WriteBsdResult(context, 0);
+                }
+            }
+            else
+            {
+                for (int i = 0; i < _pollManagers.Count; i++)
+                {
+                    if (eventsByPollManager[i].Count == 0)
+                    {
+                        continue;
+                    }
+
                     _pollManagers[i].Select(eventsByPollManager[i], timeout, out int updatedPollCount);
+
                     updatedCount += updatedPollCount;
                 }
             }
 
-            readFds.Clear();
-            writeFds.Clear();
-            errorFds.Clear();
+            List<IFileDescriptor> readyReadFds = [];
+            List<IFileDescriptor> readyWriteFds = [];
+            List<IFileDescriptor> readyErrorFds = [];
 
             foreach (PollEvent pollEvent in events)
             {
-                for (int i = 0; i < _pollManagers.Count; i++)
+                if (pollEvent.FileDescriptor == null)
                 {
-                    if (eventsByPollManager[i].Contains(pollEvent))
-                    {
-                        if (pollEvent.Data.OutputEvents.HasFlag(PollEventTypeMask.Input))
-                        {
-                            readFds.Add(pollEvent.FileDescriptor);
-                        }
+                    continue;
+                }
 
-                        if (pollEvent.Data.OutputEvents.HasFlag(PollEventTypeMask.Output))
-                        {
-                            writeFds.Add(pollEvent.FileDescriptor);
-                        }
+                if (pollEvent.Data.OutputEvents.HasFlag(PollEventTypeMask.Input))
+                {
+                    readyReadFds.Add(pollEvent.FileDescriptor);
+                }
 
-                        if (pollEvent.Data.OutputEvents.HasFlag(PollEventTypeMask.Error))
-                        {
-                            errorFds.Add(pollEvent.FileDescriptor);
-                        }
-                    }
+                if (pollEvent.Data.OutputEvents.HasFlag(PollEventTypeMask.Output))
+                {
+                    readyWriteFds.Add(pollEvent.FileDescriptor);
+                }
+
+                if (pollEvent.Data.OutputEvents.HasFlag(PollEventTypeMask.Error))
+                {
+                    readyErrorFds.Add(pollEvent.FileDescriptor);
                 }
             }
 
@@ -345,13 +472,31 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
             using WritableRegion writeFdsOut = context.Memory.GetWritableRegion(writeFdsOutBufferPosition, (int)writeFdsOutBufferSize);
             using WritableRegion errorFdsOut = context.Memory.GetWritableRegion(errorFdsOutBufferPosition, (int)errorFdsOutBufferSize);
 
-            _context.BuildMask(readFds, readFdsOut.Memory.Span);
-            _context.BuildMask(writeFds, writeFdsOut.Memory.Span);
-            _context.BuildMask(errorFds, errorFdsOut.Memory.Span);
+            // select() replaces the sets with the ready ones; stale bits left in the output buffer
+            // would read as fds that are ready and are not.
+            readFdsOut.Memory.Span.Clear();
+            writeFdsOut.Memory.Span.Clear();
+            errorFdsOut.Memory.Span.Clear();
+
+            _context.BuildMask(readyReadFds, readFdsOut.Memory.Span);
+            _context.BuildMask(readyWriteFds, writeFdsOut.Memory.Span);
+            _context.BuildMask(readyErrorFds, errorFdsOut.Memory.Span);
 
             WriteBsdResult(context, updatedCount);
 
             return ResultCode.Success;
+        }
+
+        private static void ClearFdSet(ServiceCtx context, ulong position, ulong size)
+        {
+            using WritableRegion region = context.Memory.GetWritableRegion(position, (int)size);
+
+            region.Memory.Span.Clear();
+        }
+
+        private PollEvent MakeSelectEvent(IFileDescriptor fd, PollEventTypeMask inputEvents)
+        {
+            return new PollEvent(new PollEventData { SocketFd = _context.GetFileDescriptorId(fd), InputEvents = inputEvents }, fd);
         }
 
         [CommandCmif(6)]
@@ -946,6 +1091,8 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
                     IPEndPoint endPoint = context.Memory.Read<BsdSockAddr>(bufferPosition).ToIPEndPoint();
 
                     errno = socket.Connect(endPoint);
+
+                    Logger.Info?.Print(LogClass.ServiceBsd, $"Connect(fd {socketFd}) -> {endPoint} = {errno}");
                 }
                 catch (Exception)
                 {
@@ -980,6 +1127,10 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
                     WriteSockAddr(context, bufferPosition, socket, true);
                     WriteBsdResult(context, 0, errno);
                     context.ResponseData.Write(Unsafe.SizeOf<BsdSockAddr>());
+                }
+                else
+                {
+                    Logger.Info?.Print(LogClass.ServiceBsd, $"GetPeerName(fd {socketFd}): ENOTCONN (no peer yet)");
                 }
             }
 

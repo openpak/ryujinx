@@ -86,6 +86,21 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
             }
         }
 
+        // Reverse of RetrieveFileDescriptor: the select path has to name the fds it resolved so a
+        // parked select can be replayed against them instead of against guest memory.
+        public int GetFileDescriptorId(IFileDescriptor file)
+        {
+            if (file == null)
+            {
+                return -1;
+            }
+
+            lock (_lock)
+            {
+                return _fds.IndexOf(file);
+            }
+        }
+
         public void BuildMask(List<IFileDescriptor> fds, Span<byte> mask)
         {
             foreach (IFileDescriptor descriptor in fds)

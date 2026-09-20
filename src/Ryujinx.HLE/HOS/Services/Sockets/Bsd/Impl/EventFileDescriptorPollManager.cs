@@ -108,12 +108,41 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
             return LinuxError.SUCCESS;
         }
 
+        // Readiness only, never a wait: IClient.Select owns the waiting, because blocking the
+        // single Bsd thread on an event fd deadlocks (the EventFdWrite that would end the wait is
+        // an IPC on that same thread). Returning EOPNOTSUPP here instead left nn::websocket's
+        // worker unable to ever see its wakeup fd: it never drained it and its select(1 s) over
+        // that fd alone returned instantly, so the worker free-ran at ~18k IPC/s and never drove
+        // the socket it had just dialled.
         public LinuxError Select(List<PollEvent> events, int timeout, out int updatedCount)
         {
-            // TODO: Implement Select for event file descriptors
             updatedCount = 0;
 
-            return LinuxError.EOPNOTSUPP;
+            foreach (PollEvent evnt in events)
+            {
+                EventFileDescriptor eventFd = (EventFileDescriptor)evnt.FileDescriptor;
+
+                PollEventTypeMask outputEvents = 0;
+
+                if (evnt.Data.InputEvents.HasFlag(PollEventTypeMask.Input) && eventFd.ReadEvent.WaitOne(0))
+                {
+                    outputEvents |= PollEventTypeMask.Input;
+                }
+
+                if (evnt.Data.InputEvents.HasFlag(PollEventTypeMask.Output) && eventFd.WriteEvent.WaitOne(0))
+                {
+                    outputEvents |= PollEventTypeMask.Output;
+                }
+
+                if (outputEvents != 0)
+                {
+                    evnt.Data.OutputEvents = outputEvents;
+
+                    updatedCount++;
+                }
+            }
+
+            return LinuxError.SUCCESS;
         }
     }
 }

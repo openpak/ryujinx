@@ -1,6 +1,7 @@
 using Ryujinx.Common.Logging;
 using Ryujinx.HLE.HOS.Services.Sockets.Bsd.Proxy;
 using Ryujinx.HLE.HOS.Services.Sockets.Bsd.Types;
+using System;
 using System.Collections.Generic;
 using System.Net.Sockets;
 
@@ -23,6 +24,29 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
         public bool IsCompatible(PollEvent evnt)
         {
             return evnt.FileDescriptor is ManagedSocket;
+        }
+
+        // A socket with a non-blocking connect still in progress is neither
+        // ready nor failed. Reporting Error/Disconnected for it makes titles
+        // abandon dials that would have completed (D2R-services stall: the
+        // guest reads SO_ERROR 0, gets Disconnected from poll, and never
+        // writes its TLS hello). Only a real failure (pending SO_ERROR != 0)
+        // counts as failed; anything else keeps waiting.
+        private static bool HasFailed(ISocketImpl socket)
+        {
+            if (socket is DefaultSocket dsocket)
+            {
+                try
+                {
+                    return (int)dsocket.BaseSocket.GetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Error) != 0;
+                }
+                catch (Exception exception) when (exception is SocketException || exception is ObjectDisposedException)
+                {
+                    return true;
+                }
+            }
+
+            return true;
         }
 
         public LinuxError Poll(List<PollEvent> events, int timeoutMilliseconds, out int updatedCount)
@@ -89,7 +113,7 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
 
                     PollEventTypeMask outputEvents = evnt.Data.OutputEvents & ~evnt.Data.InputEvents;
 
-                    if (errorEvents.Contains(ms.Socket))
+                    if (errorEvents.Contains(ms.Socket) && HasFailed(ms.Socket))
                     {
                         outputEvents |= PollEventTypeMask.Error;
 
@@ -113,6 +137,12 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
                     }
 
                     evnt.Data.OutputEvents = outputEvents;
+
+                    if (ms.PendingRemoteEndPoint != null)
+                    {
+                        Logger.Info?.Print(LogClass.ServiceBsd,
+                            $"Poll(pending {ms.PendingRemoteEndPoint}): in={evnt.Data.InputEvents} out={outputEvents} timeout={timeoutMilliseconds}ms");
+                    }
                 }
             }
 
@@ -170,7 +200,10 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
 
                     if (errorEvents.Contains(ms.Socket))
                     {
-                        pollEvent.Data.OutputEvents |= PollEventTypeMask.Error;
+                        if (HasFailed(ms.Socket))
+                        {
+                            pollEvent.Data.OutputEvents |= PollEventTypeMask.Error;
+                        }
                     }
                 }
             }

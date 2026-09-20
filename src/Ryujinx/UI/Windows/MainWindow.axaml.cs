@@ -606,10 +606,12 @@ namespace Ryujinx.Ava.UI.Windows
                     invitation.From, TitleName(invitation.TitleId)));
         });
 
-        private string TitleName(string titleId)
+        private string TitleName(string titleId) => TitleOf(titleId)?.Name ?? titleId.ToUpperInvariant();
+
+        /// <summary>The title out of this install's library, or null when it is not here.</summary>
+        private ApplicationData TitleOf(string titleId)
             => ViewModel.ApplicationLibrary.Applications.Items.FirstOrDefault(application =>
-                application.IdString.Equals(titleId, StringComparison.OrdinalIgnoreCase))?.Name
-                    ?? titleId.ToUpperInvariant();
+                application.IdString.Equals(titleId, StringComparison.OrdinalIgnoreCase));
 
         /// <summary>
         /// Ask whether to join, when the invitation is for the title that is running. False when it
@@ -640,7 +642,7 @@ namespace Ryujinx.Ava.UI.Windows
         /// </summary>
         private async Task JoinOrIgnoreAsync(OpenPakInvitation invitation, AppHost host)
         {
-            bool join = await Views.Dialog.OpenPakInvite.AskJoinAsync(invitation.From, TitleName(invitation.TitleId));
+            bool join = await Views.Dialog.OpenPakInvite.AskJoinAsync(invitation, TitleOf(invitation.TitleId));
 
             // The game may have been closed while the question was up.
             if (join && ViewModel.AppHost == host && host.Device?.System != null)

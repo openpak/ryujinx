@@ -4,6 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:ui="clr-namespace:FluentAvalonia.UI.Controls;assembly=FluentAvalonia"
     xmlns:ext="clr-namespace:Ryujinx.Ava.Common.Markup"
     xmlns:appLibrary="clr-namespace:Ryujinx.Ava.Systems.AppLibrary"
     xmlns:viewModels="clr-namespace:Ryujinx.Ava.UI.ViewModels"
@@ -42,6 +43,7 @@
         <StackPanel Grid.Row="2" Margin="0,0,0,12">
             <TextBlock Classes="sub" Text="{Binding UsageText}" IsVisible="{Binding SignedIn}" />
             <TextBlock Classes="sub" Text="{ext:Locale Dialog_OpenPak_SavesEmpty}" IsVisible="{Binding SavesEmpty}" />
+            <TextBlock Classes="sub" Text="{ext:Locale Dialog_OpenPak_NeedSignIn}" IsVisible="{Binding SignedOut}" />
         </StackPanel>
 
         <ScrollViewer Grid.Row="3" HorizontalScrollBarVisibility="Disabled">
@@ -49,22 +51,48 @@
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="viewModels:OpenPakSaveModel">
                         <Border Classes="settings row">
-                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
-                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                                <!-- The library's picture when the title is here, the catalogue's
+                                     when it is not, and a box with a question mark when neither
+                                     answered — a row with nothing in that corner reads as broken. -->
+                                <Panel Grid.Column="0" Width="42" Height="42" VerticalAlignment="Top">
+                                    <Border
+                                        BorderBrush="{DynamicResource AppListHoverBackgroundColor}"
+                                        BorderThickness="1"
+                                        CornerRadius="4">
+                                        <ui:FASymbolIcon
+                                            Symbol="Help"
+                                            FontSize="24"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center" />
+                                    </Border>
+                                    <Image Source="{Binding Icon}" Stretch="UniformToFill" />
+                                </Panel>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                     <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <TextBlock Classes="title" Text="{Binding TitleName}" />
+                                        <TextBlock Classes="title" Text="{Binding TitleName}" TextTrimming="CharacterEllipsis" />
                                         <!-- A conflict is the one thing here somebody has to decide about,
                                              so it is said rather than silently resolved. -->
-                                        <Border IsVisible="{Binding Conflict}" Background="#66B54141" CornerRadius="3" Padding="6,1">
+                                        <Border IsVisible="{Binding Conflict}" Background="#66B54141" CornerRadius="3" Padding="6,1" VerticalAlignment="Center">
                                             <TextBlock Text="{ext:Locale Dialog_OpenPak_SavesConflict}" FontSize="11" />
                                         </Border>
                                     </StackPanel>
-                                    <!-- Both sides, so the choice below is made on dates and not on faith. -->
+                                    <!-- What it costs the allowance, then which upload the cloud
+                                         would hand back and where that one came from. -->
+                                    <TextBlock Classes="sub" Text="{Binding SizeText}" />
                                     <TextBlock Classes="sub" Text="{Binding Detail}" />
-                                    <TextBlock Classes="sub" Text="{Binding LocalDetail}" />
+                                    <!-- Both sides, so the choice beside it is made on dates and not on faith. -->
+                                    <TextBlock Classes="sub" Text="{Binding LocalDetail}" IsVisible="{Binding Installed}" />
+                                    <TextBlock Classes="sub" Text="{ext:Locale Dialog_OpenPak_SavesNotInstalled}" IsVisible="{Binding NotInstalled}" />
                                 </StackPanel>
-                                <Button Grid.Column="1" Click="OnDownload" IsVisible="{Binding Installed}" Content="{ext:Locale Dialog_OpenPak_SavesTakeCloud}" />
-                                <Button Grid.Column="2" Click="OnUpload" IsVisible="{Binding Installed}" Content="{ext:Locale Dialog_OpenPak_SavesKeepLocal}" />
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <!-- Up and down need somewhere on this machine to read from or
+                                         write to; deleting the cloud copy does not, so a title that
+                                         is not installed here can still be cleared out. -->
+                                    <Button Click="OnDownload" IsVisible="{Binding Installed}" Content="{ext:Locale Dialog_OpenPak_SavesDownload}" />
+                                    <Button Click="OnUpload" IsVisible="{Binding Installed}" Content="{ext:Locale Dialog_OpenPak_SavesUpload}" />
+                                    <Button Click="OnDelete" Content="{ext:Locale Dialog_OpenPak_SavesDelete}" />
+                                </StackPanel>
                             </Grid>
                         </Border>
                     </DataTemplate>

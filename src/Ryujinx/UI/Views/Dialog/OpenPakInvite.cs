@@ -6,13 +6,16 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using FluentAvalonia.UI.Controls;
+using Humanizer;
 using Ryujinx.Ava.Common.Locale;
+using Ryujinx.Ava.Systems.AppLibrary;
 using Ryujinx.Ava.UI.Helpers;
 using Ryujinx.Ava.UI.ViewModels;
 using Ryujinx.HLE.HOS.Services.Account.OpenPak;
 using Ryujinx.OpenPak;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -177,30 +180,176 @@ namespace Ryujinx.Ava.UI.Views.Dialog
             return rows.Where(row => row.Box.IsChecked == true).Select(row => row.Friend).Take(max).ToList();
         }
 
-        /// <summary>"X invited you to play Y" with Join and Ignore. True for Join.</summary>
-        public static async Task<bool> AskJoinAsync(string from, string title)
+        /// <summary>
+        /// The offer to join, told the way the console's own overlay tells it: who is asking and
+        /// what they look like, the game and its icon, anything they wrote, and how long ago it
+        /// was sent. Join and Ignore underneath; true for Join.
+        /// </summary>
+        public static async Task<bool> AskJoinAsync(OpenPakInvitation invitation, ApplicationData application)
         {
+            Border avatar = new()
+            {
+                CornerRadius = new CornerRadius(24),
+                ClipToBounds = true,
+                Background = Brush(Application.Current, "ThemeControlBorderColor"),
+                Child = new TextBlock
+                {
+                    Text = Initial(invitation.From),
+                    FontSize = 20,
+                    FontWeight = FontWeight.SemiBold,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                },
+            };
+
+            StackPanel content = new()
+            {
+                Width = 380,
+                Spacing = 14,
+                Children =
+                {
+                    // Who is asking: their picture and their name, as a friend row reads.
+                    new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 12,
+                        Children =
+                        {
+                            new Panel { Width = 48, Height = 48, Children = { avatar } },
+                            new StackPanel
+                            {
+                                VerticalAlignment = VerticalAlignment.Center,
+                                Children =
+                                {
+                                    new TextBlock { Text = invitation.From, FontWeight = FontWeight.SemiBold },
+                                    new TextBlock
+                                    {
+                                        Text = LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_InviteReceivedAction],
+                                        Opacity = 0.7,
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    TitleRow(invitation, application),
+                },
+            };
+
+            // Their own words, when the game let them write any; most invitations carry none.
+            if (MessageFor(invitation.Messages) is { } message)
+            {
+                content.Children.Add(new Border
+                {
+                    Background = Brush(Application.Current, "ThemeControlBorderColor"),
+                    CornerRadius = new CornerRadius(4),
+                    Padding = new Thickness(10, 8),
+                    Child = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
+                });
+            }
+
             FAContentDialog dialog = new()
             {
                 Title = LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_InviteReceivedTitle],
                 PrimaryButtonText = LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_InviteJoin],
                 CloseButtonText = LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_InviteIgnore],
                 DefaultButton = FAContentDialogButton.Primary,
-                Content = new TextBlock
-                {
-                    Width = 380,
-                    TextWrapping = TextWrapping.Wrap,
-                    Text = LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_InviteReceived, from, title),
-                },
+                Content = content,
             };
 
-            return await ContentDialogHelper.ShowAsync(dialog) == FAContentDialogResult.Primary;
+            using CancellationTokenSource closing = new();
+
+            _ = ShowAvatarAsync(invitation.SenderId, avatar, closing.Token);
+
+            bool join = await ContentDialogHelper.ShowAsync(dialog) == FAContentDialogResult.Primary;
+
+            closing.Cancel();
+
+            return join;
         }
 
-        /// <summary>The initial stays until the picture arrives, and for good when there is none.</summary>
-        private static async Task ShowAvatarAsync(OpenPakFriend friend, Border avatar, CancellationToken cancellationToken)
+        /// <summary>
+        /// The game, drawn the way the game list draws it. A title this install does not have is
+        /// its application id and no icon: the invitation still says what it is for.
+        /// </summary>
+        private static Control TitleRow(OpenPakInvitation invitation, ApplicationData application)
         {
-            byte[] image = await Task.Run(() => OpenPakSession.Instance.FriendAvatarAsync(friend, cancellationToken));
+            StackPanel row = new() { Orientation = Orientation.Horizontal, Spacing = 12 };
+
+            if (application?.Icon is { Length: > 0 } icon)
+            {
+                row.Children.Add(new Border
+                {
+                    Width = 48,
+                    Height = 48,
+                    CornerRadius = new CornerRadius(4),
+                    ClipToBounds = true,
+                    Child = new Image { Source = new Bitmap(new MemoryStream(icon)), Stretch = Stretch.UniformToFill },
+                });
+            }
+
+            StackPanel text = new() { VerticalAlignment = VerticalAlignment.Center };
+
+            text.Children.Add(new TextBlock
+            {
+                Text = application?.Name ?? invitation.TitleId?.ToUpperInvariant(),
+                FontWeight = FontWeight.SemiBold,
+                TextWrapping = TextWrapping.Wrap,
+            });
+
+            if (invitation.CreatedAt is { } sent)
+            {
+                text.Children.Add(new TextBlock
+                {
+                    Text = LocaleManager.Instance.UpdateAndGetDynamicValue(
+                        LocaleKeys.Dialog_OpenPak_InviteReceivedSent, sent.Humanize()),
+                    Opacity = 0.7,
+                });
+            }
+
+            row.Children.Add(text);
+
+            return row;
+        }
+
+        /// <summary>
+        /// What the sender wrote, in the language this install reads: the UI language first, then
+        /// the module's own order. Null when they wrote nothing in any of them.
+        /// </summary>
+        private static string MessageFor(IReadOnlyDictionary<string, string> messages)
+        {
+            if (messages is not { Count: > 0 })
+            {
+                return null;
+            }
+
+            string ui = LocaleManager.Instance.CurrentLanguageCode.Replace('_', '-');
+
+            foreach (string language in new[] { ui, ui.Split('-')[0] }.Concat(OpenPakBaas.MessageLanguages))
+            {
+                if (messages.TryGetValue(language, out string text) && !string.IsNullOrWhiteSpace(text))
+                {
+                    return text;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>Stands in for the picture until it is here, and for good if it never arrives.</summary>
+        private static string Initial(string name)
+            => string.IsNullOrEmpty(name) ? "?" : StringInfo.GetNextTextElement(name).ToUpperInvariant();
+
+        /// <summary>The initial stays until the picture arrives, and for good when there is none.</summary>
+        private static Task ShowAvatarAsync(OpenPakFriend friend, Border avatar, CancellationToken cancellationToken)
+            => ShowPictureAsync(() => OpenPakSession.Instance.FriendAvatarAsync(friend, cancellationToken), avatar, cancellationToken);
+
+        /// <summary>The same, for somebody known only by the BAAS id an invitation names them by.</summary>
+        private static Task ShowAvatarAsync(string senderId, Border avatar, CancellationToken cancellationToken)
+            => ShowPictureAsync(() => OpenPakSession.Instance.SenderAvatarAsync(senderId, cancellationToken), avatar, cancellationToken);
+
+        private static async Task ShowPictureAsync(Func<Task<byte[]>> fetch, Border avatar, CancellationToken cancellationToken)
+        {
+            byte[] image = await Task.Run(fetch);
 
             if (image is not { Length: > 0 } || cancellationToken.IsCancellationRequested)
             {

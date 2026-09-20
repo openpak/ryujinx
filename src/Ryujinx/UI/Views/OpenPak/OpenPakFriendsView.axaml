@@ -5,6 +5,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:ext="clr-namespace:Ryujinx.Ava.Common.Markup"
+    xmlns:helpers="clr-namespace:Ryujinx.Ava.UI.Helpers"
     xmlns:viewModels="clr-namespace:Ryujinx.Ava.UI.ViewModels"
     mc:Ignorable="d"
     x:DataType="viewModels:OpenPakViewModel">
@@ -88,6 +89,11 @@
                                                 VerticalAlignment="Center"
                                                 Margin="0" />
                                         </Border>
+                                        <!-- Over the initial, which stays visible while the picture
+                                             is on its way and for anyone whose fetch fails. -->
+                                        <Border CornerRadius="17" ClipToBounds="True">
+                                            <Image Source="{Binding Avatar}" Stretch="UniformToFill" />
+                                        </Border>
                                         <Ellipse
                                             Width="11"
                                             Height="11"
@@ -99,7 +105,18 @@
                                     </Panel>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                         <TextBlock Classes="title" Text="{Binding DisplayName}" />
-                                        <TextBlock Classes="sub" Text="{Binding Status}" />
+                                        <!-- The game's own icon out of this machine's library, for a
+                                             title that is installed here: it is the same picture on
+                                             the same shelf, so it says which game without reading. -->
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <Image
+                                                Width="16"
+                                                Height="16"
+                                                VerticalAlignment="Center"
+                                                IsVisible="{Binding Playing}"
+                                                Source="{Binding TitleIcon, Converter={x:Static helpers:BitmapArrayValueConverter.Instance}}" />
+                                            <TextBlock Classes="sub" Text="{Binding Status}" VerticalAlignment="Center" />
+                                        </StackPanel>
                                     </StackPanel>
                                     <!-- Both are rare and asked about first, so they wait behind
                                          one button instead of shouting from every row. -->

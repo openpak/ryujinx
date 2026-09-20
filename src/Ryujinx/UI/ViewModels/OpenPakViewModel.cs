@@ -1,3 +1,4 @@
+using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using Ryujinx.Ava.Common;
@@ -10,8 +11,10 @@ using Ryujinx.OpenPak;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -133,6 +136,12 @@ namespace Ryujinx.Ava.UI.ViewModels
         public ObservableCollection<OpenPakPopulationModel> TitlePopulations { get; } = [];
         public ObservableCollection<OpenPakPopulationModel> NetworkPopulations { get; } = [];
 
+        /// <summary>Every service the status box watches, as it last found them.</summary>
+        public ObservableCollection<OpenPakServiceModel> Services { get; } = [];
+
+        /// <summary>This machine's own session, line by line.</summary>
+        public ObservableCollection<OpenPakSessionModel> SessionState { get; } = [];
+
         /// <summary>Every title in the library, for the pages that are about one title.</summary>
         public ObservableCollection<ApplicationData> Titles { get; }
 
@@ -159,6 +168,14 @@ namespace Ryujinx.Ava.UI.ViewModels
         }
 
         public string PlayersOnline { get; private set; } = string.Empty;
+
+        /// <summary>The status box's one-line verdict, or why there is none.</summary>
+        public string HealthHeadline { get; private set; } = string.Empty;
+
+        public string HealthSummary { get; private set; } = string.Empty;
+
+        /// <summary>Green for working, red for an outage, grey for no answer at all.</summary>
+        public IBrush HealthBrush { get; private set; } = OpenPakBrushes.Down;
 
         public string UsageText => LocaleManager.Instance.UpdateAndGetDynamicValue(
             LocaleKeys.Dialog_OpenPak_SavesUsage, Bytes(_usage.AllowanceUsed), Bytes(_usage.Allowance));
@@ -280,22 +297,87 @@ namespace Ryujinx.Ava.UI.ViewModels
 
                 _usage = usage;
 
+                // Built here rather than inside the dispatcher call: every row reads its local
+                // save directory off the disk and decodes an icon, and a page of those is not
+                // work to do on the thread that is drawing the page.
+                List<OpenPakSaveModel> rows = [];
+
+                foreach (OpenPakSave save in saves.OrderBy(save => save.TitleId, StringComparer.OrdinalIgnoreCase))
+                {
+                    ApplicationData application = ApplicationOf(save.TitleId);
+
+                    rows.Add(new OpenPakSaveModel(save, application, LocalDetailOf(application)));
+                }
+
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
                     Saves.Clear();
 
-                    foreach (OpenPakSave save in saves)
+                    foreach (OpenPakSaveModel row in rows)
                     {
-                        ApplicationData application = Titles.FirstOrDefault(title =>
-                            title.IdString.Equals(save.TitleId, StringComparison.OrdinalIgnoreCase));
-
-                        Saves.Add(new OpenPakSaveModel(save, application, LocalDetailOf(application)));
+                        Saves.Add(row);
                     }
 
                     OnPropertyChanged(nameof(SavesEmpty));
                     OnPropertyChanged(nameof(UsageText));
                 });
+
+                // The catalogue's picture for the titles this machine does not have, after the
+                // list is up and off this call's turn, as the friends page does with avatars.
+                _ = LoadSaveIconsAsync(rows);
             });
+        }
+
+        /// <summary>
+        /// The catalogue's icon for every row that had none of its own. Not awaited by the refresh:
+        /// a save manager is readable without pictures, and its buttons should not wait for them.
+        /// </summary>
+        private async Task LoadSaveIconsAsync(IReadOnlyList<OpenPakSaveModel> rows)
+        {
+            try
+            {
+                await Task.WhenAll(rows.Select(row => row.LoadIconAsync(_cancellation.Token)));
+            }
+            catch (Exception exception)
+            {
+                Logger.Debug?.Print(LogClass.Application, $"[OpenPak] {exception.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Clear a title's cloud save: every stored version, one call each.
+        ///
+        /// The server deletes versions and nothing else — there is no route that empties a title
+        /// in one go — so this is the whole of it. Nothing on this machine is touched: the local
+        /// save is the copy that cannot be fetched again, and the page asked about the cloud one.
+        /// </summary>
+        public async Task DeleteSaveAsync(OpenPakSaveModel row)
+        {
+            if (row == null)
+            {
+                return;
+            }
+
+            await Guarded(async () =>
+            {
+                foreach (OpenPakSaveVersion version in row.Save.Versions)
+                {
+                    string failure = await OpenPakApi.Instance.DeleteSaveVersionAsync(version.Id, _cancellation.Token);
+
+                    if (failure != null)
+                    {
+                        Message = LocaleManager.Instance.UpdateAndGetDynamicValue(
+                            LocaleKeys.Dialog_OpenPak_SavesDeleteFailed, row.TitleName, failure);
+
+                        return;
+                    }
+                }
+
+                Message = LocaleManager.Instance.UpdateAndGetDynamicValue(
+                    LocaleKeys.Dialog_OpenPak_SavesDeleted, row.TitleName);
+            });
+
+            await RefreshSavesAsync();
         }
 
         /// <summary>
@@ -543,10 +625,58 @@ namespace Ryujinx.Ava.UI.ViewModels
         {
             await Guarded(async () =>
             {
-                OpenPakStatus status = await OpenPakApi.Instance.StatusAsync(_cancellation.Token);
+                // Three answers from three machines, asked for together: the site's numbers, the
+                // status box's verdict on every service, and whether the console edge picks up.
+                // The status box is deliberately not the site, so one being down still answers.
+                Task<OpenPakStatus> statusTask = OpenPakApi.Instance.StatusAsync(_cancellation.Token);
+                Task<OpenPakHealth> healthTask = OpenPakApi.Instance.HealthAsync(_cancellation.Token);
+                Task<long> edgeTask = ProbeEdgeAsync(_cancellation.Token);
+
+                await Task.WhenAll(statusTask, healthTask, edgeTask);
+
+                OpenPakStatus status = statusTask.Result;
+                OpenPakHealth health = healthTask.Result;
+
+                List<OpenPakSessionModel> session = SessionRows(edgeTask.Result);
 
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
+                    Services.Clear();
+
+                    foreach (OpenPakService service in health?.Services ?? [])
+                    {
+                        Services.Add(new OpenPakServiceModel(service));
+                    }
+
+                    SessionState.Clear();
+
+                    foreach (OpenPakSessionModel row in session)
+                    {
+                        SessionState.Add(row);
+                    }
+
+                    HealthHeadline = health?.Headline ?? LocaleManager.Instance.UpdateAndGetDynamicValue(
+                        LocaleKeys.Dialog_OpenPak_StatusNoHealth, OpenPakConfig.StatusUrl);
+
+                    HealthSummary = health == null
+                        ? string.Empty
+                        : health.Summary + (string.IsNullOrEmpty(health.Generated)
+                            ? string.Empty
+                            : " " + LocaleManager.Instance.UpdateAndGetDynamicValue(
+                                LocaleKeys.Dialog_OpenPak_StatusRefreshed, health.Generated));
+
+                    // "some" is the status box's word for a partial outage; anything but "ok" is
+                    // something somebody should see, and only a total one is worth alarming red.
+                    HealthBrush = health?.State switch
+                    {
+                        "ok" => OpenPakBrushes.Up,
+                        null => OpenPakBrushes.Down,
+                        _ => OpenPakBrushes.Bad,
+                    };
+
+                    OnPropertyChanged(nameof(HealthHeadline));
+                    OnPropertyChanged(nameof(HealthSummary));
+                    OnPropertyChanged(nameof(HealthBrush));
                     TitlePopulations.Clear();
                     NetworkPopulations.Clear();
 
@@ -576,6 +706,107 @@ namespace Ryujinx.Ava.UI.ViewModels
                     OnPropertyChanged(nameof(PlayersOnline));
                 });
             });
+        }
+
+        /// <summary>
+        /// Whether the console-facing edge picks up, and how long it took, in milliseconds. -1
+        /// when it did not answer, and -2 when there is nothing configured to ask.
+        ///
+        /// A plain TCP connect, not a request: everything that edge serves is under Nintendo's own
+        /// hostnames behind the OpenPak CA, and a socket that opens is the whole of what this page
+        /// can honestly claim from out here.
+        /// </summary>
+        private static async Task<long> ProbeEdgeAsync(CancellationToken cancellationToken)
+        {
+            string address = OpenPakConfig.ResolvedConsoleServer;
+
+            if (string.IsNullOrEmpty(address))
+            {
+                return -2;
+            }
+
+            int colon = address.LastIndexOf(':');
+
+            string host = colon > 0 ? address[..colon] : address;
+            int port = colon > 0 && int.TryParse(address[(colon + 1)..], out int parsed) ? parsed : 443;
+
+            try
+            {
+                using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+                giveUp.CancelAfter(TimeSpan.FromSeconds(4));
+
+                long started = Stopwatch.GetTimestamp();
+
+                using TcpClient client = new();
+
+                await client.ConnectAsync(host, port, giveUp.Token);
+
+                return (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            }
+            catch (Exception)
+            {
+                return -1;
+            }
+        }
+
+        /// <summary>
+        /// What this machine's own session looks like: the parts that can be broken here while
+        /// every service on the network is up, which nothing else on this page would show.
+        /// </summary>
+        private static List<OpenPakSessionModel> SessionRows(long edge)
+        {
+            LocaleManager locale = LocaleManager.Instance;
+            OpenPakSession session = OpenPakSession.Instance;
+
+            bool signedIn = OpenPakApi.Instance.SignedIn;
+            string name = OpenPakAccount.Instance.DisplayName;
+
+            string address = OpenPakConfig.ResolvedConsoleServer;
+
+            string presence = session.PresenceState;
+
+            int waiting = session.Invitations.Count;
+
+            return
+            [
+                new OpenPakSessionModel(locale[LocaleKeys.Dialog_OpenPak_StatusAccount],
+                    signedIn
+                        ? locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusAccountSignedIn,
+                            name ?? locale[LocaleKeys.Dialog_OpenPak_None])
+                        : locale[LocaleKeys.Dialog_OpenPak_StatusAccountSignedOut],
+                    signedIn),
+
+                new OpenPakSessionModel(locale[LocaleKeys.Dialog_OpenPak_StatusLink],
+                    session.IsLinked
+                        ? locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusLinked,
+                            session.Nickname, session.FriendCode ?? locale[LocaleKeys.Dialog_OpenPak_None])
+                        : locale[LocaleKeys.Dialog_OpenPak_StatusNotLinked],
+                    session.IsLinked),
+
+                new OpenPakSessionModel(locale[LocaleKeys.Dialog_OpenPak_StatusEdge],
+                    edge switch
+                    {
+                        -2 => locale[LocaleKeys.Dialog_OpenPak_StatusEdgeNone],
+                        -1 => locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusEdgeDown, address),
+                        _ => locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusEdgeUp, address, edge),
+                    },
+                    edge >= 0),
+
+                new OpenPakSessionModel(locale[LocaleKeys.Dialog_OpenPak_StatusPresence],
+                    presence == null
+                        ? locale[LocaleKeys.Dialog_OpenPak_StatusPresenceNone]
+                        : locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusPresencePublished, presence),
+                    presence != null),
+
+                // Said plainly rather than dressed up as a connection: a console is pushed its
+                // invitations, and this asks for them, which is why one can arrive late here.
+                new OpenPakSessionModel(locale[LocaleKeys.Dialog_OpenPak_StatusNotifications],
+                    session.Beating
+                        ? locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusNotificationsPolled, waiting)
+                        : locale[LocaleKeys.Dialog_OpenPak_StatusNotificationsOff],
+                    session.Beating),
+            ];
         }
 
         // ---- plumbing ----
@@ -655,7 +886,7 @@ namespace Ryujinx.Ava.UI.ViewModels
                 // Whoever is there to play with first; OrderBy is stable, so the server's order holds within each.
                 foreach (OpenPakFriend friend in account.Friends.OrderByDescending(friend => friend.Online))
                 {
-                    Friends.Add(new OpenPakFriendModel(friend, NameOf(friend.TitleId)));
+                    Friends.Add(new OpenPakFriendModel(friend, NameOf(friend.TitleId), ApplicationOf(friend.TitleId)));
                 }
 
                 Requests.Clear();
@@ -679,6 +910,29 @@ namespace Ryujinx.Ava.UI.ViewModels
             });
 
             await LoadAvatarAsync();
+
+            // After the list is on screen, not before: a row with an initial in it beats an empty
+            // page while a dozen pictures come down. Not awaited either, because this runs inside
+            // the call that holds the page busy — a friend list of twenty would leave every button
+            // on the page disabled until the twentieth picture arrived.
+            _ = LoadFriendAvatarsAsync(Friends.ToArray());
+        }
+
+        /// <summary>
+        /// Every friend's picture, off the page's own turn. Each row paints itself when its own
+        /// fetch lands, so a slow one costs nobody else their picture.
+        /// </summary>
+        private async Task LoadFriendAvatarsAsync(IReadOnlyList<OpenPakFriendModel> friends)
+        {
+            try
+            {
+                await Task.WhenAll(friends.Select(friend => friend.LoadAvatarAsync(_cancellation.Token)));
+            }
+            catch (Exception exception)
+            {
+                // A picture that did not arrive is a row with an initial in it, and nothing else.
+                Logger.Debug?.Print(LogClass.Application, $"[OpenPak] {exception.Message}");
+            }
         }
 
         private void ProjectSignedOut() => Dispatcher.UIThread.Post(() =>
@@ -746,11 +1000,14 @@ namespace Ryujinx.Ava.UI.ViewModels
                 return string.Empty;
             }
 
-            ApplicationData application = Titles.FirstOrDefault(title =>
-                title.IdString.Equals(titleId, StringComparison.OrdinalIgnoreCase));
-
-            return application?.Name ?? titleId.ToUpperInvariant();
+            return ApplicationOf(titleId)?.Name ?? titleId.ToUpperInvariant();
         }
+
+        /// <summary>The installed title with this id, or null. The picture comes from here too.</summary>
+        private ApplicationData ApplicationOf(string titleId)
+            => string.IsNullOrEmpty(titleId)
+                ? null
+                : Titles.FirstOrDefault(title => title.IdString.Equals(titleId, StringComparison.OrdinalIgnoreCase));
 
         /// <summary>
         /// The local side of a cloud save, so a conflict is a comparison and not a guess: when
@@ -795,7 +1052,8 @@ namespace Ryujinx.Ava.UI.ViewModels
             Directory.CreateDirectory(directory);
         }
 
-        private static string Bytes(long value)
+        /// <summary>A size as a person reads it. Shared with the rows, which show the same figures.</summary>
+        internal static string Bytes(long value)
         {
             string[] units = ["B", "KB", "MB", "GB"];
 

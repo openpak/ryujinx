@@ -549,14 +549,23 @@ namespace Ryujinx.OpenPak
                                 (long)Number(version, "size"),
                                 String(version, "sha256"),
                                 String(version, "device"),
-                                Time(version, "created_at") ?? DateTime.MinValue));
+                                Time(version, "created_at") ?? DateTime.MinValue)
+                            {
+                                Backend = String(version, "backend"),
+                            });
                         }
                     }
 
                     // Newest first, so a dialog can show "the one you would get" without sorting.
                     versions.Sort((left, right) => right.Number.CompareTo(left.Number));
 
-                    saves.Add(new OpenPakSave(String(save, "platform"), String(save, "title_id"), versions));
+                    // The site names and pictures the title from its own catalogue, which is the
+                    // only thing that can: the cloud holds saves for titles this machine never had.
+                    saves.Add(new OpenPakSave(String(save, "platform"), String(save, "title_id"), versions)
+                    {
+                        Name = String(save, "name"),
+                        IconUrl = String(save, "icon"),
+                    });
                 }
             }
 
@@ -640,6 +649,15 @@ namespace Ryujinx.OpenPak
                 return (exception.Message, null);
             }
         }
+
+        /// <summary>
+        /// Drop one stored version. Failure is null on success, or why not.
+        ///
+        /// Versions are all the server deletes: there is no route that removes a title's cloud
+        /// save in one call, so clearing one means asking for every version it holds.
+        /// </summary>
+        public Task<string> DeleteSaveVersionAsync(long id, CancellationToken cancellationToken)
+            => DeleteAsync($"/api/v1/me/saves/versions/{id}", cancellationToken);
 
         // ---- mods ----
 
@@ -783,6 +801,65 @@ namespace Ryujinx.OpenPak
         }
 
         /// <summary>
+        /// What the status box says about every service it watches.
+        ///
+        /// A different machine to the one it watches, and unauthenticated on purpose: the answer
+        /// has to survive the site being the broken part, which is exactly when somebody looks.
+        /// </summary>
+        public async Task<OpenPakHealth> HealthAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                // The status box renders Go structs straight out, so its keys are capitalised.
+                using HttpResponseMessage response = await Client.GetAsync(
+                    $"{OpenPakConfig.StatusUrl}/api/status", cancellationToken);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+
+                using JsonDocument document = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync(cancellationToken));
+
+                JsonElement root = document.RootElement;
+                List<OpenPakService> services = [];
+
+                if (root.TryGetProperty("Groups", out JsonElement groups) && groups.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (JsonElement group in groups.EnumerateArray())
+                    {
+                        if (!group.TryGetProperty("Services", out JsonElement list) || list.ValueKind != JsonValueKind.Array)
+                        {
+                            continue;
+                        }
+
+                        foreach (JsonElement service in list.EnumerateArray())
+                        {
+                            services.Add(new OpenPakService(
+                                String(group, "Title"),
+                                String(service, "Name"),
+                                String(service, "Blurb"),
+                                Boolean(service, "Up"),
+                                Fraction(service, "Uptime"),
+                                String(service, "Latency"),
+                                String(service, "Checked")));
+                        }
+                    }
+                }
+
+                return new OpenPakHealth(String(root, "Headline"), String(root, "Sub"),
+                    String(root, "State"), String(root, "Generated"), services);
+            }
+            catch (Exception exception)
+            {
+                Logger.Debug?.Print(LogClass.Application, $"[OpenPak] The status box did not answer: {exception.Message}");
+
+                return null;
+            }
+        }
+
+        /// <summary>
         /// The CA every console-facing certificate chains to, fetched over public TLS from the
         /// site. This is the one bootstrap that has to come from somewhere already trusted:
         /// afterwards the guest's redirected connections are checked against it and nothing else.
@@ -888,6 +965,43 @@ namespace Ryujinx.OpenPak
 
                 // The body carries the reason the core gave; a bare status code says nothing
                 // useful about a conflicting relationship or an unknown friend code.
+                return Reason(text) ?? $"OpenPak answered {(int)response.StatusCode}.";
+            }
+            catch (Exception exception)
+            {
+                return exception.Message;
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+
+        /// <summary>A DELETE that answers like <see cref="PostAsync"/>: null on success, or why not.</summary>
+        private async Task<string> DeleteAsync(string path, CancellationToken cancellationToken)
+        {
+            await _gate.WaitAsync(cancellationToken);
+
+            try
+            {
+                using HttpRequestMessage request = Authorised(HttpMethod.Delete, BaseUrl + path);
+
+                using HttpResponseMessage response = await Client.SendAsync(request, cancellationToken);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+
+                string text = await response.Content.ReadAsStringAsync(cancellationToken);
+
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    await ForgetAsync();
+
+                    return "That sign-in is no longer valid. Sign in again.";
+                }
+
                 return Reason(text) ?? $"OpenPak answered {(int)response.StatusCode}.";
             }
             catch (Exception exception)
@@ -1144,6 +1258,13 @@ namespace Ryujinx.OpenPak
         private static ulong Number(JsonElement element, string property)
             => element.TryGetProperty(property, out JsonElement value) &&
                 value.ValueKind == JsonValueKind.Number && value.TryGetUInt64(out ulong number)
+                    ? number
+                    : 0;
+
+        /// <summary>A number that is not whole — a percentage. <see cref="Number"/> reads none.</summary>
+        private static double Fraction(JsonElement element, string property)
+            => element.TryGetProperty(property, out JsonElement value) &&
+                value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out double number)
                     ? number
                     : 0;
 

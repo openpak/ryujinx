@@ -77,6 +77,21 @@ namespace Ryujinx.OpenPak
         /// receiving game is handed the decoded bytes, never this string.
         /// </summary>
         public string ApplicationData { get; init; }
+
+        /// <summary>
+        /// Who sent it, as the BAAS user id the inbox names them by: 16 hex digits. Null off the
+        /// website route, which only carries the name.
+        /// </summary>
+        public string SenderId { get; init; }
+
+        /// <summary>When it was sent, or null on a route that carries no time.</summary>
+        public DateTime? CreatedAt { get; init; }
+
+        /// <summary>
+        /// What the sender's game wrote, one text per language tag. Empty when it wrote nothing,
+        /// which is the usual case: most titles send an invitation with no words at all.
+        /// </summary>
+        public IReadOnlyDictionary<string, string> Messages { get; init; } = new Dictionary<string, string>();
     }
 
     /// <summary>One stored version of one title's save.</summary>
@@ -87,7 +102,11 @@ namespace Ryujinx.OpenPak
         long Size,
         string Sha256,
         string Device,
-        DateTime CreatedAt);
+        DateTime CreatedAt)
+    {
+        /// <summary>Where the bytes sit: "local" is the OpenPak allowance, anything else is the account's own storage.</summary>
+        public string Backend { get; init; }
+    }
 
     /// <summary>Every version the cloud holds for one title on one platform.</summary>
     public sealed record OpenPakSave(
@@ -96,6 +115,31 @@ namespace Ryujinx.OpenPak
         IReadOnlyList<OpenPakSaveVersion> Versions)
     {
         public OpenPakSaveVersion Newest => Versions.Count > 0 ? Versions[0] : null;
+
+        /// <summary>
+        /// What the catalogue calls the title, when the site could name it. The cloud holds saves
+        /// for titles this machine has never had, and an id is not a name to anybody.
+        /// </summary>
+        public string Name { get; init; }
+
+        /// <summary>The catalogue's icon for the title, site-relative, or null.</summary>
+        public string IconUrl { get; init; }
+
+        /// <summary>Every version together: what this one title costs the allowance.</summary>
+        public long Size
+        {
+            get
+            {
+                long total = 0;
+
+                foreach (OpenPakSaveVersion version in Versions)
+                {
+                    total += version.Size;
+                }
+
+                return total;
+            }
+        }
     }
 
     /// <summary>How much of the allowance the account has used.</summary>
@@ -122,6 +166,28 @@ namespace Ryujinx.OpenPak
 
     /// <summary>How many people are on one title, or on one console's network.</summary>
     public sealed record OpenPakPopulation(string Key, string Namespace, int Players);
+
+    /// <summary>
+    /// One service on the status page, as it answered its last check. The wording is the
+    /// server's: the status box already explains each service to a person, and saying it
+    /// differently here would be two explanations to keep in step.
+    /// </summary>
+    public sealed record OpenPakService(
+        string Group,
+        string Name,
+        string Blurb,
+        bool Up,
+        double Uptime,
+        string Latency,
+        string Checked);
+
+    /// <summary>Everything the status box knows, as one answer.</summary>
+    public sealed record OpenPakHealth(
+        string Headline,
+        string Summary,
+        string State,
+        string Generated,
+        IReadOnlyList<OpenPakService> Services);
 
     /// <summary>The public status page's numbers.</summary>
     public sealed record OpenPakStatus(

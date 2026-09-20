@@ -11,50 +11,103 @@
     <Design.DataContext>
         <viewModels:OpenPakViewModel />
     </Design.DataContext>
-    <Grid Margin="20" RowDefinitions="Auto,Auto,Auto,*">
+    <Grid Margin="20" RowDefinitions="Auto,Auto,*">
         <!-- The same on every page: what this is on the left, fetch it again on the right. -->
         <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,16">
             <TextBlock Grid.Column="0" Classes="page" Text="{ext:Locale Dialog_OpenPak_PageStatus}" />
             <Button Grid.Column="1" Name="RefreshButton" Content="{ext:Locale Dialog_OpenPak_Refresh}" MinWidth="90" IsEnabled="{Binding Ready}" />
         </Grid>
 
-        <TextBlock Grid.Row="2" Classes="sub" Text="{Binding PlayersOnline}" Margin="0,0,0,12" />
+        <!-- The one sentence somebody opened this page for, said first and in the status box's
+             own words. Everything under it is the detail behind it. -->
+        <Border Grid.Row="1" Classes="settings card" Margin="0,0,0,16">
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                <Ellipse Grid.Column="0" Width="14" Height="14" VerticalAlignment="Center" Fill="{Binding HealthBrush}" />
+                <StackPanel Grid.Column="1">
+                    <TextBlock Classes="title" Text="{Binding HealthHeadline}" TextWrapping="Wrap" />
+                    <TextBlock Classes="sub" Text="{Binding HealthSummary}" TextWrapping="Wrap" />
+                    <TextBlock Classes="sub" Text="{Binding PlayersOnline}" />
+                </StackPanel>
+            </Grid>
+        </Border>
 
-        <Grid Grid.Row="3" ColumnDefinitions="*,*" ColumnSpacing="20">
+        <Grid Grid.Row="2" ColumnDefinitions="*,*" ColumnSpacing="20">
             <DockPanel Grid.Column="0">
-                <TextBlock DockPanel.Dock="Top" Classes="h1" Text="{ext:Locale Dialog_OpenPak_StatusTitles}" Margin="0,0,0,8" />
-            <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-                <ItemsControl ItemsSource="{Binding TitlePopulations}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="viewModels:OpenPakPopulationModel">
-                            <Border Classes="settings row">
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Classes="title" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Grid.Column="1" Classes="sub" Text="{Binding PlayersText}" />
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </ScrollViewer>
+                <TextBlock DockPanel.Dock="Top" Classes="h1" Text="{ext:Locale Dialog_OpenPak_StatusServices}" Margin="0,0,0,8" />
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding Services}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="viewModels:OpenPakServiceModel">
+                                <Border Classes="settings row">
+                                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                                        <Ellipse Grid.Column="0" Width="10" Height="10" VerticalAlignment="Center" Fill="{Binding StateBrush}" />
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock Classes="title" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                            <!-- The server's own explanation of the service, which
+                                                 is the one a person on the status page already read. -->
+                                            <TextBlock Classes="sub" Text="{Binding Blurb}" IsVisible="{Binding HasBlurb}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                            <TextBlock Classes="title" Text="{Binding StateText}" HorizontalAlignment="Right" />
+                                            <TextBlock Classes="sub" Text="{Binding Detail}" HorizontalAlignment="Right" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
             </DockPanel>
-            <DockPanel Grid.Column="1">
-                <TextBlock DockPanel.Dock="Top" Classes="h1" Text="{ext:Locale Dialog_OpenPak_StatusNetworks}" Margin="0,0,0,8" />
-            <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-                <ItemsControl ItemsSource="{Binding NetworkPopulations}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="viewModels:OpenPakPopulationModel">
-                            <Border Classes="settings row">
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Classes="title" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Grid.Column="1" Classes="sub" Text="{Binding PlayersText}" />
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+            <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+                    <!-- This machine before the network: every service can be up while the part
+                         that is broken is the sign-in, the link or the edge address on this PC. -->
+                    <TextBlock Classes="h1" Text="{ext:Locale Dialog_OpenPak_StatusSession}" Margin="0,0,0,8" />
+                    <ItemsControl ItemsSource="{Binding SessionState}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="viewModels:OpenPakSessionModel">
+                                <Border Classes="settings row">
+                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                                        <Ellipse Grid.Column="0" Width="10" Height="10" VerticalAlignment="Center" Fill="{Binding StateBrush}" />
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock Classes="title" Text="{Binding Name}" />
+                                            <TextBlock Classes="sub" Text="{Binding Detail}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <TextBlock Classes="h1" Text="{ext:Locale Dialog_OpenPak_StatusTitles}" Margin="0,16,0,8" />
+                    <ItemsControl ItemsSource="{Binding TitlePopulations}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="viewModels:OpenPakPopulationModel">
+                                <Border Classes="settings row">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBlock Grid.Column="0" Classes="title" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="1" Classes="sub" Text="{Binding PlayersText}" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <TextBlock Classes="h1" Text="{ext:Locale Dialog_OpenPak_StatusNetworks}" Margin="0,16,0,8" />
+                    <ItemsControl ItemsSource="{Binding NetworkPopulations}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="viewModels:OpenPakPopulationModel">
+                                <Border Classes="settings row">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBlock Grid.Column="0" Classes="title" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="1" Classes="sub" Text="{Binding PlayersText}" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
             </ScrollViewer>
-            </DockPanel>
         </Grid>
     </Grid>
 </UserControl>

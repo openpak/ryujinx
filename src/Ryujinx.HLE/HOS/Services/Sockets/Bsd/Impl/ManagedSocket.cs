@@ -24,7 +24,15 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
 
         public nint Handle => nint.Zero;
 
-        public IPEndPoint RemoteEndPoint => Socket.RemoteEndPoint as IPEndPoint;
+        // The connect target while a non-blocking connect is still in flight.
+        // Horizon reports the pending peer from getpeername instead of
+        // ENOTCONN, and titles (D2R's game-server dial) treat ENOTCONN as a
+        // fatal abort rather than "not yet". Report the pending target until
+        // the real one exists; a failed connect surfaces through SO_ERROR and
+        // the next real operation like on hardware.
+        public IPEndPoint PendingRemoteEndPoint { get; private set; }
+
+        public IPEndPoint RemoteEndPoint => Socket.RemoteEndPoint as IPEndPoint ?? PendingRemoteEndPoint;
 
         public IPEndPoint LocalEndPoint => Socket.LocalEndPoint as IPEndPoint;
 
@@ -166,6 +174,7 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
 
         public void Close()
         {
+            PendingRemoteEndPoint = null;
             Socket.Close();
         }
 
@@ -174,27 +183,40 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
             bool isLDNPrivateIP = remoteEndPoint.Address.ToString().StartsWith("192.168.");
             if (isLDNPrivateIP)
             {
-                Logger.Info?.PrintMsg(LogClass.ServiceBsd, $"Connecting to: {ProtocolType}/{remoteEndPoint.Address}:{remoteEndPoint.Port}");
+                Logger.Info?.PrintMsg(LogClass.ServiceBsd, $"Connecting to: {ProtocolType}/{remoteEndPoint.Address}:{remoteEndPoint.Port} (Blocking={Blocking})");
             }
             else
             {
-                Logger.Info?.PrintMsg(LogClass.ServiceBsd, $"Connecting to: {ProtocolType}/***:{remoteEndPoint.Port}");
+                Logger.Info?.PrintMsg(LogClass.ServiceBsd, $"Connecting to: {ProtocolType}/***:{remoteEndPoint.Port} (Blocking={Blocking})");
             }
 
             try
             {
+                PendingRemoteEndPoint = remoteEndPoint;
+
                 Socket.Connect(remoteEndPoint);
+
+                Logger.Info?.Print(LogClass.ServiceBsd, "Connect: completed synchronously");
+                PendingRemoteEndPoint = null;
 
                 return LinuxError.SUCCESS;
             }
             catch (SocketException exception)
             {
-                if (!Blocking && exception.ErrorCode == (int)WsaError.WSAEWOULDBLOCK)
+                // NOTE: compare SocketErrorCode, not ErrorCode: on Linux the
+                // errno for EAGAIN is 11 while WSAEWOULDBLOCK is the Windows
+                // value 10035, so the ErrorCode comparison never matches here
+                // and every non-blocking connect fell into the else branch
+                // (clearing the pending peer and skipping the probe logs).
+                if (!Blocking && exception.SocketErrorCode == SocketError.WouldBlock)
                 {
+                    Logger.Info?.Print(LogClass.ServiceBsd, "Connect: in progress (non-blocking)");
                     return LinuxError.EINPROGRESS;
                 }
                 else
                 {
+                    PendingRemoteEndPoint = null;
+
                     if (exception.SocketErrorCode != SocketError.WouldBlock)
                     {
                         Logger.Warning?.Print(LogClass.ServiceBsd, $"Socket Exception: {exception}");
@@ -213,6 +235,7 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
 
         public void Dispose()
         {
+            PendingRemoteEndPoint = null;
             Logger.Info?.Print(LogClass.ServiceBsd, "Socket closed");
             Socket.Close();
             Socket.Dispose();
@@ -286,6 +309,11 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
                 }
 
                 receiveSize = Socket.Receive(buffer, ConvertBsdSocketFlags(flags));
+
+                if (receiveSize > 0)
+                {
+                    NoteTraffic(false, buffer[..receiveSize]);
+                }
 
                 result = LinuxError.SUCCESS;
             }
@@ -368,6 +396,43 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
             return result;
         }
 
+        // HLE packet tap for the pending-connect window: records the first
+        // bytes a dialling socket actually moves, then retires (the pending
+        // phase is over once traffic flows). Auth tokens ride these frames,
+        // so anything looking like a JWT is redacted like server-side.
+        private void NoteTraffic(bool sent, ReadOnlySpan<byte> data)
+        {
+            var target = PendingRemoteEndPoint;
+            if (target == null)
+            {
+                return;
+            }
+
+            PendingRemoteEndPoint = null;
+
+            string dir = sent ? "TX" : "RX";
+            bool sensitive = false;
+            int scan = Math.Min(data.Length, 512);
+            for (int i = 0; i + 3 <= scan; i++)
+            {
+                if (data[i] == (byte)'e' && data[i + 1] == (byte)'y' && data[i + 2] == (byte)'J')
+                {
+                    sensitive = true;
+                    break;
+                }
+            }
+
+            if (sensitive)
+            {
+                Logger.Info?.Print(LogClass.ServiceBsd, $"BsdTap {dir} {target} ({data.Length} bytes, auth payload redacted)");
+                return;
+            }
+
+            int n = Math.Min(data.Length, 64);
+            Logger.Info?.Print(LogClass.ServiceBsd,
+                $"BsdTap {dir} {target} ({data.Length} bytes): {Convert.ToHexString(data[..n])}");
+        }
+
         public LinuxError Send(out int sendSize, ReadOnlySpan<byte> buffer, BsdSocketFlags flags)
         {
             try
@@ -375,6 +440,11 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
                 sendSize = Socket.Send(buffer, ConvertBsdSocketFlags(flags));
 
                 Logger.Debug?.Print(LogClass.ServiceBsd, $"Send: {sendSize} bytes on connected socket");
+
+                if (sendSize > 0)
+                {
+                    NoteTraffic(true, buffer[..sendSize]);
+                }
 
                 return LinuxError.SUCCESS;
             }
@@ -387,7 +457,14 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
 
                 sendSize = -1;
 
-                return WinSockHelper.ConvertError((WsaError)exception.ErrorCode);
+                LinuxError mapped = WinSockHelper.ConvertError((WsaError)exception.ErrorCode);
+                if (mapped == LinuxError.ENOTCONN)
+                {
+                    Logger.Info?.Print(LogClass.ServiceBsd,
+                        $"Send: ENOTCONN ({buffer.Length} bytes held back)");
+                }
+
+                return mapped;
             }
         }
 

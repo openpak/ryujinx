@@ -1,8 +1,13 @@
 using nietras.SeparatedValues;
 using Ryujinx.Ava.Common.Locale;
+using Ryujinx.Common.Logging;
+using Ryujinx.OpenPak;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Ryujinx.Ava.Systems.OpenPak
 {
@@ -40,8 +45,84 @@ namespace Ryujinx.Ava.Systems.OpenPak
             return entries;
         }
 
+        /// <summary>
+        /// What the site says right now, fetched at startup. The embedded list is the offline
+        /// answer and the state of the world when this build was made; a title promoted since
+        /// then is live here without a new build.
+        /// </summary>
+        private static Dictionary<string, LocaleKeys> _live = new();
+
         public static (LocaleKeys Status, string Backend)? Find(string titleId)
-            => _entries.TryGetValue(titleId, out (LocaleKeys, string) entry) ? entry : null;
+        {
+            bool known = _entries.TryGetValue(titleId, out (LocaleKeys Status, string Backend) entry);
+
+            if (_live.TryGetValue(titleId, out LocaleKeys live))
+            {
+                return (live, known ? entry.Backend : string.Empty);
+            }
+
+            return known ? entry : null;
+        }
+
+        /// <summary>
+        /// Reads the catalogue's statuses from the site. Failure leaves the embedded list in
+        /// place: an emulator that cannot reach the site still knows what it shipped knowing.
+        /// </summary>
+        /// <returns>true when the site says something this build did not, so a list already
+        /// drawn from the embedded answer is now out of date.</returns>
+        public static async Task<bool> RefreshAsync(CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                IReadOnlyDictionary<string, string> statuses =
+                    await OpenPakApi.Instance.CatalogueStatusesAsync(cancellationToken);
+
+                Dictionary<string, LocaleKeys> live = new();
+
+                foreach (KeyValuePair<string, string> entry in statuses)
+                {
+                    LocaleKeys? status = entry.Value switch
+                    {
+                        "live" => LocaleKeys.Dialog_OpenPak_CompatibilityLive,
+                        "beta" => LocaleKeys.Dialog_OpenPak_CompatibilityBeta,
+                        "alpha" => LocaleKeys.Dialog_OpenPak_CompatibilityAlpha,
+                        _ => null,
+                    };
+
+                    if (status.HasValue)
+                    {
+                        live[entry.Key.ToLowerInvariant()] = status.Value;
+                    }
+                }
+
+                if (live.Count == 0)
+                {
+                    return false;
+                }
+
+                bool changed = false;
+
+                foreach (KeyValuePair<string, LocaleKeys> entry in live)
+                {
+                    if (!_entries.TryGetValue(entry.Key, out (LocaleKeys Status, string Backend) had) ||
+                        had.Status != entry.Value)
+                    {
+                        changed = true;
+                        break;
+                    }
+                }
+
+                _live = live;
+
+                return changed;
+            }
+            catch (Exception exception)
+            {
+                Logger.Debug?.Print(LogClass.Application, $"[OpenPak] Catalogue statuses: {exception.Message}");
+            }
+
+            return false;
+        }
 
         public static LocaleKeys Tooltip(LocaleKeys status) => status switch
         {

@@ -536,6 +536,16 @@ namespace Ryujinx.Ava.UI.Windows
             // The account cache keeps friends and presence warm on its own timer once started.
             OpenPakAccount.Instance.Start();
 
+            // How far each title's online play is served is the site's to say: the list built
+            // into this build is only what was true when it was made, and a title promoted since
+            // would otherwise read as beta until somebody rebuilt the emulator.
+            if (await Systems.OpenPak.OpenPakCompatibility.RefreshAsync(CancellationToken.None) && _applicationsLoadedOnce)
+            {
+                // A title promoted since this build was made: the games already drawn carry the
+                // old answer, so they are read again.
+                LoadApplications();
+            }
+
             // A profile that was signed in and has lost its bearer — revoked from the website, or
             // a password store that forgot it — says so, instead of quietly playing offline.
             if (!OpenPakApi.Instance.SignedIn && OpenPakLinks.Get(OpenPakConfig.ProfileId) != null)

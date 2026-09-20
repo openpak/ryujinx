@@ -42,6 +42,7 @@ namespace Ryujinx.OpenPak
         // installed. Loaded once per site — it does not change under a running session — and
         // cleared with everything else whenever the address does.
         private readonly ConcurrentDictionary<string, string> _catalogueNames = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, string> _catalogueStatuses = new(StringComparer.OrdinalIgnoreCase);
         private bool _catalogueLoaded;
 
         private OpenPakApi()
@@ -132,6 +133,7 @@ namespace Ryujinx.OpenPak
             _token = null;
             _baseUrl = OpenPakConfig.WebsiteUrl;
             _catalogueNames.Clear();
+            _catalogueStatuses.Clear();
             _catalogueLoaded = false;
         }
 
@@ -432,6 +434,18 @@ namespace Ryujinx.OpenPak
         /// down on first ask and is kept for the site — asking per friend would be one request per
         /// stranger's game, and the catalogue does not change under a running session.
         /// </summary>
+        /// <summary>
+        /// How far OpenPak serves each title's online play, keyed by lower-case title id, from
+        /// the same catalogue fetch. The site is the source of truth: a title promoted to live
+        /// says so here without waiting for a new build of this emulator.
+        /// </summary>
+        public async Task<IReadOnlyDictionary<string, string>> CatalogueStatusesAsync(CancellationToken cancellationToken)
+        {
+            await CatalogueNameAsync("0", cancellationToken); // loads the catalogue once
+
+            return _catalogueStatuses;
+        }
+
         public async Task<string> CatalogueNameAsync(string titleId, CancellationToken cancellationToken)
         {
             if (string.IsNullOrEmpty(titleId))
@@ -454,6 +468,13 @@ namespace Ryujinx.OpenPak
                         if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(name))
                         {
                             _catalogueNames[id] = name;
+                        }
+
+                        string status = String(title, "status");
+
+                        if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(status))
+                        {
+                            _catalogueStatuses[id.ToLowerInvariant()] = status.ToLowerInvariant();
                         }
                     }
 

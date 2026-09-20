@@ -396,18 +396,28 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
             return result;
         }
 
-        // HLE packet tap for the pending-connect window: records the first
-        // bytes a dialling socket actually moves, then retires (the pending
-        // phase is over once traffic flows). Auth tokens ride these frames,
-        // so anything looking like a JWT is redacted like server-side.
+        // HLE packet tap: records the first frames a dialled socket moves, both
+        // ways. It used to retire after one frame, which hid everything past a
+        // TLS hello -- exactly the window worth seeing. Auth tokens ride these
+        // frames, so anything looking like a JWT is redacted like server-side.
+        private const int TapFrameLimit = 12;
+
+        private int _tapRemaining = TapFrameLimit;
+        private IPEndPoint _tapTarget;
+
         private void NoteTraffic(bool sent, ReadOnlySpan<byte> data)
         {
-            var target = PendingRemoteEndPoint;
-            if (target == null)
+            _tapTarget ??= PendingRemoteEndPoint;
+
+            var target = _tapTarget;
+            if (target == null || _tapRemaining <= 0)
             {
                 return;
             }
 
+            _tapRemaining--;
+
+            // The pending-connect phase is over once traffic flows.
             PendingRemoteEndPoint = null;
 
             string dir = sent ? "TX" : "RX";

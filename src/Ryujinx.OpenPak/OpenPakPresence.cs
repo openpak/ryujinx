@@ -16,13 +16,35 @@ namespace Ryujinx.OpenPak
     public static class OpenPakPresence
     {
         /// <summary>One profile's declaration, for the title that made it.</summary>
-        public sealed record State(string TitleId, bool SessionOpen, string AppField);
+        public sealed record State(string TitleId, bool SessionOpen, string AppField)
+        {
+            /// <summary>When the state or the blob last changed, as the module restamps its slot.</summary>
+            public long UpdatedAt { get; init; }
+        }
 
         private static readonly Lock _lock = new();
         private static readonly Dictionary<string, State> _states = new();
 
         /// <summary>Raised when a profile's declaration changed, so it is published now rather than at the next beat.</summary>
         public static event Action Changed;
+
+        /// <summary>
+        /// The running application's id and its NACP presence group, as the module resolves them
+        /// from the calling process. Set by the emulated console; (0, 0) when nothing runs.
+        /// </summary>
+        public static Func<(ulong ApplicationId, ulong PresenceGroupId)> RunningApplication { get; set; }
+
+        /// <summary>
+        /// What presence publishes as `appInfo:appId` and `appInfo:presenceGroupId`. The group is
+        /// the NACP's, which is what a friend's game compares against; a title that declares none
+        /// is its own group.
+        /// </summary>
+        public static (ulong ApplicationId, ulong PresenceGroupId) Application()
+        {
+            (ulong applicationId, ulong presenceGroupId) = RunningApplication?.Invoke() ?? (0UL, 0UL);
+
+            return (applicationId, presenceGroupId != 0 ? presenceGroupId : applicationId);
+        }
 
         /// <summary>
         /// The declaration for this profile while <paramref name="titleId"/> runs. A declaration
@@ -57,6 +79,7 @@ namespace Ryujinx.OpenPak
 
                 State next = previous with
                 {
+                    TitleId = titleId,
                     SessionOpen = declaration switch
                     {
                         1 => true,
@@ -66,10 +89,17 @@ namespace Ryujinx.OpenPak
                     AppField = appField ?? previous.AppField,
                 };
 
-                _states[profileId ?? string.Empty] = next;
+                // The module publishes on a change of state or blob and on nothing else, and
+                // restamps its slot's time when one of them changes.
+                changed = next.SessionOpen != previous.SessionOpen || next.AppField != previous.AppField ||
+                    next.TitleId != previous.TitleId;
 
-                // The module publishes on a change of state or blob and on nothing else.
-                changed = next != previous;
+                if (changed)
+                {
+                    next = next with { UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds() };
+                }
+
+                _states[profileId ?? string.Empty] = next;
             }
 
             if (changed)

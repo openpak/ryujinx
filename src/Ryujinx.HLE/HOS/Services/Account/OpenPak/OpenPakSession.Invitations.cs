@@ -36,12 +36,18 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             => (await FriendUserAsync(friend?.FriendCode, cancellationToken))?.Id;
 
         /// <summary>
-        /// The receiver for an id a game passed itself (StartSendingFriendInvitation). Games read
-        /// their friends' ids from friend:u, which serves pids; one that matches a friend is sent
-        /// to that friend's BAAS user, and anything else is taken to be a BAAS id already.
+        /// The receiver for an id a game passed itself (StartSendingFriendInvitation). The friend
+        /// list the guest reads is the server's, so an id in it is already the BAAS user id the
+        /// invitation is addressed to. Anything else is still looked up through the website
+        /// friend list by friend code, for a game that kept an id from before.
         /// </summary>
         public async Task<string> ReceiverIdAsync(ulong networkServiceAccountId, CancellationToken cancellationToken)
         {
+            if (OpenPakBaas.Friend(networkServiceAccountId) != null)
+            {
+                return networkServiceAccountId.ToString("x16");
+            }
+
             OpenPakFriend friend = OpenPakAccount.Instance.Friends.FirstOrDefault(known => known.Pid == networkServiceAccountId);
 
             return (friend != null ? await ReceiverIdAsync(friend, cancellationToken) : null)
@@ -122,23 +128,23 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                 using JsonDocument found = await GetAsync(
                     $"https://{BaasHost}/1.0.0/users?filter.links.friendCode.id.$in={Uri.EscapeDataString(code)}", cancellationToken);
 
-                foreach (JsonElement user in found.RootElement.GetProperty("items").EnumerateArray())
+                // The flat user shape (contract A.7): items missing id, nickname or
+                // thumbnailUrl are skipped, so a half-written user never poisons the cache.
+                BaasUser user = OpenPakBaas.ParseUsers(found.RootElement).FirstOrDefault();
+
+                if (user == null)
                 {
-                    if (!user.TryGetProperty("id", out JsonElement id) || string.IsNullOrEmpty(id.GetString()))
-                    {
-                        continue;
-                    }
-
-                    (string, string) entry = (id.GetString(),
-                        user.TryGetProperty("thumbnailUrl", out JsonElement thumbnail) ? thumbnail.GetString() : null);
-
-                    lock (_friendUsers)
-                    {
-                        _friendUsers[friendCode] = entry;
-                    }
-
-                    return entry;
+                    return null;
                 }
+
+                (string, string) entry = (user.Id.ToString("x16"), user.ThumbnailUrl);
+
+                lock (_friendUsers)
+                {
+                    _friendUsers[friendCode] = entry;
+                }
+
+                return entry;
             }
             catch (Exception exception)
             {
@@ -149,24 +155,103 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         }
 
         /// <summary>
-        /// The game changed its presence declaration: publish it now, as the module does on each
-        /// change, rather than at the next beat. Nothing is said before a sign-in.
+        /// Publish the presence, if it is not the one already published. The module sends presence
+        /// when the state or the app-field blob changes and at no other time — no heartbeat, no
+        /// timer — so this is the only thing that ever puts one on the wire. <paramref name="force"/>
+        /// is the console's republish on reconnect. Nothing is said before a sign-in.
         /// </summary>
-        private async Task PublishPresenceAsync()
+        private async Task PublishPresenceAsync(bool force = false)
         {
             if (!Enabled || _userId == null || _device == null)
             {
                 return;
             }
 
+            string body = CurrentPresenceBody();
+
+            await _presenceGate.WaitAsync();
+
             try
             {
-                await PresenceAsync("ONLINE", CancellationToken.None);
+                if (!force && body == _publishedPresence)
+                {
+                    return;
+                }
+
+                await PresenceAsync(body, CancellationToken.None);
+
+                // Kept only once the server has it: a publish that failed is one to try again.
+                _publishedPresence = body;
             }
             catch (Exception exception)
             {
                 Logger.Debug?.Print(LogClass.ServiceAcc, $"[OpenPak] Presence update failed: {exception.Message}");
             }
+            finally
+            {
+                _presenceGate.Release();
+            }
+        }
+
+        /// <summary>
+        /// The friend list, on the module's own route (contract §A.1). A change raises the event
+        /// the guest's notification queue carries, so a game or applet waiting on it refreshes.
+        /// </summary>
+        private async Task SyncFriendsAsync()
+        {
+            if (!Enabled || _userId == null)
+            {
+                return;
+            }
+
+            await OpenPakBaas.SyncFriendListAsync(force: false, CancellationToken.None);
+        }
+
+        /// <summary>
+        /// The caches the guest's friends module reads and cannot fetch for itself, because a
+        /// command answered with an HTTP round trip is a game left waiting: the block list
+        /// (§A.8), the caller's own user (§A.6) and the invitation inbox with its groups (§A.5).
+        /// </summary>
+        private async Task SyncModuleCachesAsync()
+        {
+            if (!Enabled || _userId == null)
+            {
+                return;
+            }
+
+            await OpenPakBaas.SyncBlockListAsync(CancellationToken.None);
+            await OpenPakBaas.SyncUserSettingAsync(CancellationToken.None);
+            await OpenPakBaas.SyncInvitationsAsync(CancellationToken.None);
+        }
+
+        /// <summary>
+        /// How <see cref="OpenPakBaas"/> reaches the server: this session's pinned client and the
+        /// user-scoped bearer from the login, with the sign-in refreshed first when it has aged out.
+        /// A request that cannot be made at all comes back as status 0, which the caller maps like
+        /// any other unreachable server.
+        /// </summary>
+        private async Task<OpenPakBaas.Reply> SendBaasAsync(
+            HttpMethod method, string url, string contentType, string body, CancellationToken cancellationToken)
+        {
+            await EnsureAsync(cancellationToken);
+
+            if (!Enabled || _http == null || _applicationToken == null)
+            {
+                return new OpenPakBaas.Reply(0, null);
+            }
+
+            using HttpRequestMessage request = new(method, url);
+
+            if (body != null)
+            {
+                request.Content = new StringContent(body, Encoding.UTF8, contentType ?? "application/json");
+            }
+
+            request.Headers.Add("Authorization", "Bearer " + _applicationToken);
+
+            using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken);
+
+            return new OpenPakBaas.Reply((int)response.StatusCode, await response.Content.ReadAsStringAsync(cancellationToken));
         }
 
         /// <summary>A string as a JSON string literal, UTF-8 left as it is, as the console writes it.</summary>

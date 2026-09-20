@@ -29,6 +29,10 @@ namespace Ryujinx.OpenPak
         private IReadOnlyList<OpenPakFriend> _friends = [];
         private IReadOnlyList<OpenPakRequest> _requests = [];
         private IReadOnlyList<OpenPakInvitation> _invitations = [];
+        private IReadOnlyList<BaasRequest> _inboxRequests = [];
+        private IReadOnlyList<BaasRequest> _outboxRequests = [];
+        private int _unreadRequests;
+        private int _nativeInvitationsUnread;
         private byte[] _avatar;
         private bool _presenceBaselineTaken;
 
@@ -71,7 +75,27 @@ namespace Ryujinx.OpenPak
         /// that polls the inbox (which lives a project up); read by the guest's friends module
         /// (which lives a project down and cannot see the session).
         /// </summary>
-        public int NativeInvitationsUnread { get; set; }
+        public int NativeInvitationsUnread
+        {
+            get => _nativeInvitationsUnread;
+            set
+            {
+                if (_nativeInvitationsUnread == value)
+                {
+                    return;
+                }
+
+                _nativeInvitationsUnread = value;
+
+                NativeInvitationsChanged?.Invoke();
+            }
+        }
+
+        /// <summary>
+        /// Raised when the number of invitations waiting changed. A system screen showing the
+        /// badge is told through the guest's notification queue rather than left to poll.
+        /// </summary>
+        public event Action NativeInvitationsChanged;
 
         /// <summary>Mark these invitation ids read; an empty list means all of them.</summary>
         public Func<IReadOnlyList<ulong>, Task> NativeInvitationsRead { get; set; }
@@ -118,6 +142,89 @@ namespace Ryujinx.OpenPak
                 {
                     return _invitations;
                 }
+            }
+        }
+
+        /// <summary>
+        /// The received request box as of the last refresh, in the friends module's own
+        /// terms: what the guest's 20201/20202 serve. Never null.
+        /// </summary>
+        public IReadOnlyList<BaasRequest> InboxRequests
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _inboxRequests;
+                }
+            }
+        }
+
+        /// <summary>The sent request box, as above. Never null.</summary>
+        public IReadOnlyList<BaasRequest> OutboxRequests
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _outboxRequests;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Answer or withdraw a request (30202–30204): the request id the guest passed and
+        /// the state to PATCH it to (<c>"CANCELED"</c>, <c>"AUTHORIZED"</c>, <c>"REJECTED"</c>).
+        /// Set by the session that holds the bearer (which lives a project up); read by the
+        /// guest's friends module (which lives a project down and cannot see the session).
+        /// </summary>
+        public Func<ulong, string, Task> AnswerFriendRequest { get; set; }
+
+        /// <summary>Mark a received request read (30205).</summary>
+        public Func<ulong, Task> ReadFriendRequest { get; set; }
+
+        /// <summary>Send a request (30200/30201/10200).</summary>
+        public Func<BaasFriendRequestSend, Task> SendFriendRequest { get; set; }
+
+        /// <summary>
+        /// A request arrived that was not in the box before: the unread count went up, which is
+        /// what the module's inbox parse signals and what the guest's notification queue carries
+        /// as a new-friend-request event.
+        /// </summary>
+        public event Action FriendRequestArrived;
+
+        /// <summary>
+        /// Replace both request boxes with a fresh fetch. Raised through <see cref="Changed"/>
+        /// like every other cache update.
+        /// </summary>
+        public void SetFriendRequests(IReadOnlyList<BaasRequest> inbox, IReadOnlyList<BaasRequest> outbox)
+        {
+            bool arrived;
+
+            lock (_lock)
+            {
+                int unread = 0;
+
+                foreach (BaasRequest request in inbox ?? [])
+                {
+                    if (!request.Read)
+                    {
+                        unread++;
+                    }
+                }
+
+                arrived = unread > _unreadRequests;
+                _unreadRequests = unread;
+
+                _inboxRequests = inbox ?? [];
+                _outboxRequests = outbox ?? [];
+            }
+
+            Changed?.Invoke();
+
+            if (arrived)
+            {
+                FriendRequestArrived?.Invoke();
             }
         }
 
@@ -181,6 +288,9 @@ namespace Ryujinx.OpenPak
                 _friends = [];
                 _requests = [];
                 _invitations = [];
+                _inboxRequests = [];
+                _outboxRequests = [];
+                _unreadRequests = 0;
                 _avatar = null;
             }
 

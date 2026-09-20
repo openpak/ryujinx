@@ -10,21 +10,44 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
 {
     partial class FriendService : IFriendService, IDisposable
     {
         private readonly IEmulatorAccountManager _accountManager;
+        private readonly FriendsServicePermissionLevel _permissionLevel;
         private SystemEventType _completionEvent;
 
         public FriendService(IEmulatorAccountManager accountManager, FriendsServicePermissionLevel permissionLevel)
         {
             _accountManager = accountManager;
+            _permissionLevel = permissionLevel;
 
             Os.CreateSystemEvent(out _completionEvent, EventClearMode.ManualClear, interProcess: true).AbortOnFailure();
             Os.SignalSystemEvent(ref _completionEvent); // TODO: Figure out where we are supposed to signal this.
         }
+
+        /// <summary>
+        /// Whether this port carries the viewer bit (friend:v, friend:m, friend:a). A viewer reads
+        /// a friend's presence blob whatever group it belongs to; friend:u and friend:s get the
+        /// privacy filter (contract §B.3).
+        /// </summary>
+        private bool Viewer => _permissionLevel.HasFlag(FriendsServicePermissionLevel.ViewerMask);
+
+        /// <summary>The viewer bit, or 2121-0090 (contract §B.1). 20xxx and 22xxx need it.</summary>
+        private Result RequireViewer()
+            => Viewer ? Result.Success : FriendResult.PermissionDenied;
+
+        /// <summary>The manager bit (friend:m, friend:a), or 2121-0090. Every 30xxx needs it.</summary>
+        private Result RequireManager()
+            => _permissionLevel.HasFlag(FriendsServicePermissionLevel.ManagerMask) ? Result.Success : FriendResult.PermissionDenied;
+
+        /// <summary>The system bit (friend:s, friend:a), or 2121-0090. 40100/40400/49900 need it.</summary>
+        private Result RequireSystem()
+            => _permissionLevel.HasFlag(FriendsServicePermissionLevel.SystemMask) ? Result.Success : FriendResult.PermissionDenied;
 
         [CmifCommand(0)]
         public Result GetCompletionEvent([CopyHandle] out int completionEventHandle)
@@ -66,14 +89,14 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
                 return Result.Success;
             }
 
-            foreach (OpenPakFriend friend in OpenPakFriends.Filtered(filter, offset))
+            foreach (BaasFriend friend in OpenPakFriends.Filtered(filter, offset))
             {
                 if (count == friendIds.Length)
                 {
                     break;
                 }
 
-                friendIds[count++] = OpenPakFriends.ToFriendImpl(friend, userId).NetworkUserId;
+                friendIds[count++] = new NetworkServiceAccountId(friend.Id);
             }
 
             return Result.Success;
@@ -103,14 +126,14 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
                 return Result.Success;
             }
 
-            foreach (OpenPakFriend friend in OpenPakFriends.Filtered(filter, offset))
+            foreach (BaasFriend friend in OpenPakFriends.Filtered(filter, offset))
             {
                 if (count == friendList.Length)
                 {
                     break;
                 }
 
-                friendList[count++] = OpenPakFriends.ToFriendImpl(friend, userId);
+                friendList[count++] = OpenPakFriends.ToFriendImpl(friend, userId, Viewer);
             }
 
             Logger.Info?.Print(LogClass.ServiceFriend, $"[OpenPak] Served {count} friends to the guest");
@@ -136,19 +159,17 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
 
             // The guest asks about specific ids and expects them back in the order it asked, so
             // this answers per slot rather than filling the buffer with whoever matched.
-            List<OpenPakFriend> friends = OpenPakFriends.Filtered(default, 0);
+            List<BaasFriend> friends = OpenPakFriends.Filtered(default, 0);
 
             for (int index = 0; index < friendIds.Length && index < info.Length; index++)
             {
                 info[index] = default;
 
-                foreach (OpenPakFriend friend in friends)
+                foreach (BaasFriend friend in friends)
                 {
-                    FriendImpl candidate = OpenPakFriends.ToFriendImpl(friend, userId);
-
-                    if (candidate.NetworkUserId == friendIds[index])
+                    if (friend.Id == friendIds[index].Id)
                     {
-                        info[index] = candidate;
+                        info[index] = OpenPakFriends.ToFriendImpl(friend, userId, Viewer);
 
                         break;
                     }
@@ -175,9 +196,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(10120)]
         public Result CheckFriendListAvailability(out bool listAvailable, Uid userId)
         {
-            listAvailable = true;
-
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            listAvailable = OpenPakFriends.ListAvailableFor(userId);
 
             return Result.Success;
         }
@@ -185,7 +204,18 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(10121)]
         public Result EnsureFriendListAvailable(Uid userId)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            if (userId.IsNull)
+            {
+                return FriendResult.InvalidArgument;
+            }
+
+            // The console syncs inline when it has no cache. Here the sync is started and the
+            // guest answered at once: blocking a game's thread on an HTTP round trip is the one
+            // thing this service may never do.
+            if (OpenPakFriends.AvailableFor(userId) && !OpenPakBaas.FriendListAvailable)
+            {
+                _ = OpenPakBaas.SyncFriendListAsync(true, CancellationToken.None);
+            }
 
             return Result.Success;
         }
@@ -199,7 +229,29 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             ulong pidPlaceholder,
             [ClientProcessId] ulong pid)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, arg2, arg3, pidPlaceholder, pid });
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, arg2, arg3, pidPlaceholder, pid });
+
+                return Result.Success;
+            }
+
+            // The application info comes from the caller's process, and the channel is
+            // always IN_APP: this is the in-game "send friend request" button.
+            ulong titleId = OpenPakFriends.OwnTitleId();
+            (string targetName, string targetLanguage) = OpenPakFriends.ScreenName(arg2);
+            (string ownName, string ownLanguage) = OpenPakFriends.ScreenName(arg3);
+
+            // Fire and forget: the POST is a network call and this is the game's thread.
+            _ = OpenPakAccount.Instance.SendFriendRequest?.Invoke(new BaasFriendRequestSend(friendId.Id, "IN_APP")
+            {
+                ApplicationId = titleId,
+                PresenceGroupId = titleId,
+                TargetName = targetName,
+                TargetLanguage = targetLanguage,
+                OwnName = ownName,
+                OwnLanguage = ownLanguage,
+            });
 
             return Result.Success;
         }
@@ -229,7 +281,17 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         {
             count = 0;
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, offset });
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                return Result.Success;
+            }
+
+            IReadOnlyList<BaasBlock> blocks = OpenPakBaas.Blocks;
+
+            for (int index = Math.Max(offset, 0); index < blocks.Count && count < blockedIds.Length; index++)
+            {
+                blockedIds[count++] = new NetworkServiceAccountId(blocks[index].Id);
+            }
 
             return Result.Success;
         }
@@ -237,9 +299,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(10420)]
         public Result CheckBlockedUserListAvailability(out bool listAvailable, Uid userId)
         {
-            listAvailable = true;
-
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            listAvailable = OpenPakFriends.AvailableFor(userId) && OpenPakBaas.BlockListAvailable;
 
             return Result.Success;
         }
@@ -247,7 +307,10 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(10421)]
         public Result EnsureBlockedUserListAvailable(Uid userId)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            if (OpenPakFriends.AvailableFor(userId) && !OpenPakBaas.BlockListAvailable)
+            {
+                _ = OpenPakBaas.SyncBlockListAsync(CancellationToken.None);
+            }
 
             return Result.Success;
         }
@@ -258,11 +321,51 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             Uid userId,
             [Buffer(HipcBufferFlags.In | HipcBufferFlags.Pointer)] ReadOnlySpan<NetworkServiceAccountId> friendIds)
         {
-            string friendIdList = string.Join(", ", friendIds.ToArray());
+            // Answered per slot, in the order asked, as the module matches its results by id.
+            // A user nobody has looked up yet is left invalid and fetched for the next call.
+            for (int index = 0; index < friendIds.Length && index < profileList.Length; index++)
+            {
+                profileList[index] = User(friendIds[index].Id) is { } user
+                    ? OpenPakFriends.ToProfileImpl(user)
+                    : default;
+            }
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendIdList });
+            Warm(friendIds);
 
             return Result.Success;
+        }
+
+        /// <summary>
+        /// One user for the profile commands: a friend out of the list cache, else whatever the
+        /// user cache has. Both carry the same three fields the flat user shape requires.
+        /// </summary>
+        private static BaasUser User(ulong id)
+        {
+            if (OpenPakBaas.Friend(id) is { } friend)
+            {
+                return new BaasUser(friend.Id, friend.Nickname, friend.ThumbnailUrl) { PlayLog = friend.PlayLog };
+            }
+
+            return OpenPakBaas.User(id);
+        }
+
+        /// <summary>Ask for the ids nothing has cached yet, off this thread (§A.7).</summary>
+        private static void Warm(ReadOnlySpan<NetworkServiceAccountId> friendIds)
+        {
+            List<ulong> ids = [];
+
+            foreach (NetworkServiceAccountId friendId in friendIds)
+            {
+                if (User(friendId.Id) == null)
+                {
+                    ids.Add(friendId.Id);
+                }
+            }
+
+            if (ids.Count > 0)
+            {
+                OpenPakBaas.WarmUsers(ids);
+            }
         }
 
         [CmifCommand(10600)]
@@ -414,6 +517,13 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(20100)]
         public Result GetFriendCount(out int count, Uid userId, SizedFriendFilter filter, ulong pidPlaceholder, [ClientProcessId] ulong pid)
         {
+            count = 0;
+
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
             count = OpenPakFriends.AvailableFor(userId) ? OpenPakFriends.Filtered(filter, 0).Count : 0;
 
             return Result.Success;
@@ -424,7 +534,25 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         {
             count = 0;
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                return Result.Success;
+            }
+
+            // "Newly" is extras.self.isConfirmed absent or false (§A.1): a friendship the person
+            // has not yet looked at, which is what the badge on the friend list counts.
+            foreach (BaasFriend friend in OpenPakBaas.Friends)
+            {
+                if (friend.IsNewly)
+                {
+                    count++;
+                }
+            }
 
             return Result.Success;
         }
@@ -437,26 +565,131 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         {
             detailedInfo = default;
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId });
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId) || OpenPakBaas.Friend(friendId.Id) is not { } friend)
+            {
+                return FriendResult.From(OpenPakBaas.FriendNotFound);
+            }
+
+            detailedInfo = OpenPakFriends.ToDetailedInfoImpl(friend, userId);
 
             return Result.Success;
         }
 
+        [CmifCommand(20107)]
+        public Result GetFriendDetailedInfoV2(
+            [Buffer(HipcBufferFlags.Out | HipcBufferFlags.Pointer, 0x800)] out FriendDetailedInfoImpl detailedInfo,
+            Uid userId,
+            NetworkServiceAccountId friendId)
+            => GetFriendDetailedInfo(out detailedInfo, userId, friendId);
+
         [CmifCommand(20103)]
         public Result SyncFriendList(Uid userId)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            // The console clears the cooldown and syncs inline; here the sync is started and the
+            // guest answered at once. The list on screen refreshes through the notification event.
+            if (OpenPakFriends.AvailableFor(userId))
+            {
+                _ = OpenPakBaas.SyncFriendListAsync(true, CancellationToken.None);
+            }
 
             return Result.Success;
         }
 
         [CmifCommand(20104)]
-        public Result RequestSyncFriendList(Uid userId)
+        public Result RequestSyncFriendList(Uid userId) => SyncFriendList(userId);
+
+        [CmifCommand(20105)]
+        public Result GetFriendListForViewer(
+            out int count,
+            [Buffer(HipcBufferFlags.Out | HipcBufferFlags.MapAlias)] Span<FriendForViewerImpl> friendList,
+            Uid userId,
+            int offset,
+            SizedFriendFilter filter)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            count = 0;
+
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (userId.IsNull)
+            {
+                return FriendResult.InvalidArgument;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                return Result.Success;
+            }
+
+            foreach (BaasFriend friend in OpenPakFriends.Filtered(filter, offset))
+            {
+                if (count == friendList.Length)
+                {
+                    break;
+                }
+
+                friendList[count++] = OpenPakFriends.ToFriendForViewerImpl(friend, userId);
+            }
 
             return Result.Success;
         }
+
+        [CmifCommand(20106)]
+        public Result UpdateFriendInfoForViewer(
+            [Buffer(HipcBufferFlags.Out | HipcBufferFlags.MapAlias)] Span<FriendForViewerImpl> info,
+            Uid userId,
+            [Buffer(HipcBufferFlags.In | HipcBufferFlags.Pointer)] ReadOnlySpan<NetworkServiceAccountId> friendIds)
+        {
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            for (int index = 0; index < friendIds.Length && index < info.Length; index++)
+            {
+                info[index] = OpenPakFriends.AvailableFor(userId) && OpenPakBaas.Friend(friendIds[index].Id) is { } friend
+                    ? OpenPakFriends.ToFriendForViewerImpl(friend, userId)
+                    : default;
+            }
+
+            return Result.Success;
+        }
+
+        // 20108 / 20109 are the 0x220 viewer shape. Its first part is the same, but the audit
+        // does not pin where the valid flag sits in it, and a friend written without one is a
+        // friend the caller drops — so the commands exist (a missing id is a CMIF error the
+        // caller cannot tell from a real failure) and answer an empty list.
+        [CmifCommand(20108)]
+        public Result GetFriendListForViewerV2(
+            out int count,
+            [Buffer(HipcBufferFlags.Out | HipcBufferFlags.MapAlias)] Span<byte> friendList,
+            Uid userId,
+            int offset,
+            SizedFriendFilter filter)
+        {
+            count = 0;
+
+            return RequireViewer();
+        }
+
+        [CmifCommand(20109)]
+        public Result UpdateFriendInfoForViewerV2(
+            [Buffer(HipcBufferFlags.Out | HipcBufferFlags.MapAlias)] Span<byte> info,
+            Uid userId,
+            [Buffer(HipcBufferFlags.In | HipcBufferFlags.Pointer)] ReadOnlySpan<NetworkServiceAccountId> friendIds)
+            => RequireViewer();
 
         [CmifCommand(20110)]
         public Result LoadFriendSetting(
@@ -466,7 +699,40 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         {
             friendSetting = default;
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId });
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId) || OpenPakBaas.Friend(friendId.Id) is not { } friend)
+            {
+                return FriendResult.From(OpenPakBaas.FriendNotFound);
+            }
+
+            friendSetting = OpenPakFriends.ToFriendSettingImpl(friend, userId);
+
+            return Result.Success;
+        }
+
+        [CmifCommand(20111)]
+        public Result LoadFriendSettingV2(
+            [Buffer(HipcBufferFlags.Out | HipcBufferFlags.Pointer, 0x80)] out FriendSettingImplV2 friendSetting,
+            Uid userId,
+            NetworkServiceAccountId friendId)
+        {
+            friendSetting = default;
+
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId) || OpenPakBaas.Friend(friendId.Id) is not { } friend)
+            {
+                return FriendResult.From(OpenPakBaas.FriendNotFound);
+            }
+
+            friendSetting = OpenPakFriends.ToFriendSettingImplV2(friend, userId);
 
             return Result.Success;
         }
@@ -477,6 +743,11 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             count = 0;
             count2 = 0;
 
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
             if (!OpenPakFriends.AvailableFor(userId))
             {
                 Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
@@ -484,17 +755,20 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
                 return Result.Success;
             }
 
-            foreach (OpenPakRequest request in OpenPakAccount.Instance.Requests)
+            // The badge (contract §A.4.3): unread is the inbox items without
+            // extras.receiver.read true, read the ones with it.
+            foreach (BaasRequest request in OpenPakAccount.Instance.InboxRequests)
             {
-                if (request.Incoming)
+                if (request.Read)
+                {
+                    count2++;
+                }
+                else
                 {
                     count++;
                 }
             }
 
-            // The second count is the newly-arrived subset. Nothing here tracks what the console
-            // has already been shown, and reporting every request as new would put a badge on the
-            // profile that never clears, so this stays at zero until that state is kept.
             return Result.Success;
         }
 
@@ -503,18 +777,96 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             out int count,
             [Buffer(HipcBufferFlags.Out | HipcBufferFlags.MapAlias)] Span<FriendRequestImpl> requestList,
             Uid userId,
-            int arg3,
-            int arg4)
+            int offset,
+            int listType)
         {
             count = 0;
 
-            // FriendRequestImpl's layout is not established — the struct is empty upstream — so
-            // there is no shape to write a request into. Filling the buffer with zeros would be a
-            // guess the console reads as data. Requests are accepted from the OpenPak window
-            // instead, and GetReceivedFriendRequestCount above still reports them truthfully.
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, arg3, arg4 });
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, offset, listType });
+
+                return Result.Success;
+            }
+
+            // Type 1 is the outbox (sent), 2 the inbox (received). Type 0 is in-person
+            // requests, which live in faced.v2.bin and never touch REST.
+            IReadOnlyList<BaasRequest> box = listType switch
+            {
+                1 => OpenPakAccount.Instance.OutboxRequests,
+                2 => OpenPakAccount.Instance.InboxRequests,
+                _ => [],
+            };
+
+            for (int index = offset; index < box.Count && count < requestList.Length; index++)
+            {
+                if (index < 0)
+                {
+                    continue;
+                }
+
+                requestList[count++] = OpenPakFriends.ToRequestImpl(box[index], userId, listType);
+            }
 
             return Result.Success;
+        }
+
+        [CmifCommand(20202)]
+        public Result GetFriendRequestListV2(
+            out int count,
+            [Buffer(HipcBufferFlags.Out | HipcBufferFlags.MapAlias)] Span<FriendRequestImplV2> requestList,
+            Uid userId,
+            int offset,
+            int listType)
+        {
+            count = 0;
+
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, offset, listType });
+
+                return Result.Success;
+            }
+
+            IReadOnlyList<BaasRequest> box = listType switch
+            {
+                1 => OpenPakAccount.Instance.OutboxRequests,
+                2 => OpenPakAccount.Instance.InboxRequests,
+                _ => [],
+            };
+
+            for (int index = offset; index < box.Count && count < requestList.Length; index++)
+            {
+                if (index < 0)
+                {
+                    continue;
+                }
+
+                requestList[count++] = OpenPakFriends.ToRequestImplV2(box[index], userId, listType);
+            }
+
+            return Result.Success;
+        }
+
+        // 20203 counts the `friend_request_received` pushes this console has seen. Nothing here
+        // holds a push connection — the boxes are polled — so the counter is always 0, which is
+        // what a console that has been pushed nothing reports.
+        [CmifCommand(20203)]
+        public Result GetReceivedFriendRequestPushCount(out int count, Uid userId)
+        {
+            count = 0;
+
+            return RequireViewer();
         }
 
         [CmifCommand(20300)]
@@ -590,11 +942,55 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             out int count,
             [Buffer(HipcBufferFlags.Out | HipcBufferFlags.MapAlias)] Span<BlockedUserImpl> blockedUsers,
             Uid userId,
-            int arg3)
+            int offset)
         {
             count = 0;
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, arg3 });
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                return Result.Success;
+            }
+
+            IReadOnlyList<BaasBlock> blocks = OpenPakBaas.Blocks;
+
+            for (int index = Math.Max(offset, 0); index < blocks.Count && count < blockedUsers.Length; index++)
+            {
+                blockedUsers[count++] = OpenPakFriends.ToBlockedUserImpl(blocks[index], userId);
+            }
+
+            return Result.Success;
+        }
+
+        [CmifCommand(20402)]
+        public Result GetBlockedUserListV2(
+            out int count,
+            [Buffer(HipcBufferFlags.Out | HipcBufferFlags.MapAlias)] Span<BlockedUserImplV2> blockedUsers,
+            Uid userId,
+            int offset)
+        {
+            count = 0;
+
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                return Result.Success;
+            }
+
+            IReadOnlyList<BaasBlock> blocks = OpenPakBaas.Blocks;
+
+            for (int index = Math.Max(offset, 0); index < blocks.Count && count < blockedUsers.Length; index++)
+            {
+                blockedUsers[count++] = OpenPakFriends.ToBlockedUserImplV2(blocks[index], userId);
+            }
 
             return Result.Success;
         }
@@ -602,7 +998,15 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(20401)]
         public Result SyncBlockedUserList(Uid userId)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (OpenPakFriends.AvailableFor(userId))
+            {
+                _ = OpenPakBaas.SyncBlockListAsync(CancellationToken.None);
+            }
 
             return Result.Success;
         }
@@ -613,9 +1017,42 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             Uid userId,
             [Buffer(HipcBufferFlags.In | HipcBufferFlags.Pointer)] ReadOnlySpan<NetworkServiceAccountId> friendIds)
         {
-            string friendIdList = string.Join(", ", friendIds.ToArray());
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendIdList });
+            for (int index = 0; index < friendIds.Length && index < extraList.Length; index++)
+            {
+                extraList[index] = User(friendIds[index].Id) is { } user
+                    ? OpenPakFriends.ToProfileExtraImpl(user)
+                    : default;
+            }
+
+            Warm(friendIds);
+
+            return Result.Success;
+        }
+
+        [CmifCommand(20502)]
+        public Result GetProfileExtraListV2(
+            [Buffer(HipcBufferFlags.Out | HipcBufferFlags.MapAlias)] Span<ProfileExtraImplV2> extraList,
+            Uid userId,
+            [Buffer(HipcBufferFlags.In | HipcBufferFlags.Pointer)] ReadOnlySpan<NetworkServiceAccountId> friendIds)
+        {
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            for (int index = 0; index < friendIds.Length && index < extraList.Length; index++)
+            {
+                extraList[index] = User(friendIds[index].Id) is { } user
+                    ? OpenPakFriends.ToProfileExtraImplV2(user)
+                    : default;
+            }
+
+            Warm(friendIds);
 
             return Result.Success;
         }
@@ -625,7 +1062,39 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         {
             relationship = default;
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId });
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                return Result.Success;
+            }
+
+            // Answered from the caches the server already filled rather than with a round trip:
+            // the friend list, the block list, and the sent-request box (§A.7).
+            relationship.IsFriend = OpenPakBaas.Friend(friendId.Id) != null;
+
+            foreach (BaasBlock block in OpenPakBaas.Blocks)
+            {
+                if (block.Id == friendId.Id)
+                {
+                    relationship.IsBlocking = true;
+
+                    break;
+                }
+            }
+
+            foreach (BaasRequest request in OpenPakAccount.Instance.OutboxRequests)
+            {
+                if (request.OtherId == friendId.Id)
+                {
+                    relationship.IsRequestSent = true;
+
+                    break;
+                }
+            }
 
             return Result.Success;
         }
@@ -635,7 +1104,17 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         {
             userPresenceView = default;
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                return Result.Success;
+            }
+
+            userPresenceView = OpenPakFriends.OwnPresenceView();
 
             return Result.Success;
         }
@@ -665,7 +1144,37 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         {
             userSetting = default;
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId) || OpenPakBaas.UserSetting is not { } setting)
+            {
+                return Result.Success;
+            }
+
+            userSetting = OpenPakFriends.ToUserSettingImpl(setting, userId);
+
+            return Result.Success;
+        }
+
+        [CmifCommand(20802)]
+        public Result LoadUserSettingV2([Buffer(HipcBufferFlags.Out | HipcBufferFlags.Pointer, 0x800)] out UserSettingImplV2 userSetting, Uid userId)
+        {
+            userSetting = default;
+
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId) || OpenPakBaas.UserSetting is not { } setting)
+            {
+                return Result.Success;
+            }
+
+            userSetting = OpenPakFriends.ToUserSettingImplV2(setting, userId);
 
             return Result.Success;
         }
@@ -673,7 +1182,15 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(20801)]
         public Result SyncUserSetting(Uid userId)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (OpenPakFriends.AvailableFor(userId))
+            {
+                _ = OpenPakBaas.SyncUserSettingAsync(CancellationToken.None);
+            }
 
             return Result.Success;
         }
@@ -707,30 +1224,118 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         {
             count = 0;
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                return Result.Success;
+            }
+
+            // Read and unread both: the inbox request the module makes carries no read filter,
+            // and each item says which it is.
+            foreach (BaasInvitation invitation in OpenPakBaas.Invitations)
+            {
+                if (count == invitationList.Length)
+                {
+                    break;
+                }
+
+                invitationList[count++] = OpenPakFriends.ToInvitationImpl(invitation);
+            }
+
+            return Result.Success;
+        }
+
+        [CmifCommand(22002)]
+        public Result GetReceivedFriendInvitationListV2(
+            out int count,
+            [Buffer(HipcBufferFlags.Out | HipcBufferFlags.MapAlias)] Span<FriendInvitationForViewerImplV2> invitationList,
+            Uid userId)
+        {
+            count = 0;
+
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                return Result.Success;
+            }
+
+            foreach (BaasInvitation invitation in OpenPakBaas.Invitations)
+            {
+                if (count == invitationList.Length)
+                {
+                    break;
+                }
+
+                invitationList[count++] = OpenPakFriends.ToInvitationImplV2(invitation);
+            }
 
             return Result.Success;
         }
 
         [CmifCommand(22001)]
         public Result GetReceivedFriendInvitationDetailedInfo(
-            [Buffer(HipcBufferFlags.Out | HipcBufferFlags.MapAlias, 0x1400)] out FriendInvitationGroupImpl invicationGroup,
+            [Buffer(HipcBufferFlags.Out | HipcBufferFlags.MapAlias, 0x1400)] out FriendInvitationGroupImpl invitationGroup,
             Uid userId,
             FriendInvitationGroupId groupId)
         {
-            invicationGroup = default;
+            invitationGroup = default;
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, groupId });
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId) || OpenPakBaas.InvitationGroup(groupId.Id) is not { } group)
+            {
+                return FriendResult.From(OpenPakBaas.InvalidArgument);
+            }
+
+            invitationGroup = OpenPakFriends.ToInvitationGroupImpl(group);
 
             return Result.Success;
         }
 
-        // The list (22000) and the detail (22001) stay stubbed: FriendInvitationForViewerImpl and
-        // FriendInvitationGroupImpl have no established layout, and a struct of zeros a title reads
-        // as data is worse than an empty list. The count has a shape, so it is answered.
+        [CmifCommand(22003)]
+        public Result GetReceivedFriendInvitationDetailedInfoV2(
+            [Buffer(HipcBufferFlags.Out | HipcBufferFlags.MapAlias, 0x1400)] out FriendInvitationGroupImplV2 invitationGroup,
+            Uid userId,
+            FriendInvitationGroupId groupId)
+        {
+            invitationGroup = default;
+
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId) || OpenPakBaas.InvitationGroup(groupId.Id) is not { } group)
+            {
+                return FriendResult.From(OpenPakBaas.InvalidArgument);
+            }
+
+            invitationGroup = OpenPakFriends.ToInvitationGroupImplV2(group);
+
+            return Result.Success;
+        }
+
         [CmifCommand(22010)]
         public Result GetReceivedFriendInvitationCountCache(out int count, Uid userId)
         {
+            count = 0;
+
+            if (RequireViewer() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
             count = OpenPakFriends.AvailableFor(userId) ? OpenPakAccount.Instance.NativeInvitationsUnread : 0;
 
             return Result.Success;
@@ -739,7 +1344,23 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30100)]
         public Result DropFriendNewlyFlags(Uid userId)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                return Result.Success;
+            }
+
+            foreach (BaasFriend friend in OpenPakBaas.Friends)
+            {
+                if (friend.IsNewly)
+                {
+                    DropNewly(friend.Id);
+                }
+            }
 
             return Result.Success;
         }
@@ -747,7 +1368,20 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30101)]
         public Result DeleteFriend(Uid userId, NetworkServiceAccountId friendId)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                return Result.Success;
+            }
+
+            // Fire and forget: the DELETE is a network call and this is the game's thread. The
+            // friendship disappears from the cache because the sync that follows it no longer
+            // carries it, which is how the console loses it too (§A.3).
+            _ = OpenPakBaas.DeleteFriendAsync(friendId.Id, CancellationToken.None);
 
             return Result.Success;
         }
@@ -755,15 +1389,49 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30110)]
         public Result DropFriendNewlyFlag(Uid userId, NetworkServiceAccountId friendId)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (OpenPakFriends.AvailableFor(userId))
+            {
+                DropNewly(friendId.Id);
+            }
 
             return Result.Success;
+        }
+
+        /// <summary>
+        /// One friend is no longer "newly" (§A.2): the flag is cleared locally at once — the
+        /// module does that before it sends anything — and the PATCH replaces the cached entry
+        /// with the relationship the server answers with.
+        /// </summary>
+        private static void DropNewly(ulong friendId)
+        {
+            OpenPakBaas.Update(friendId, friend => friend with { IsNewly = false });
+
+            _ = OpenPakBaas.PatchFriendAsync(friendId, "add", "/extras/self/isConfirmed",
+                writer => writer.WriteBooleanValue(true), CancellationToken.None);
         }
 
         [CmifCommand(30120)]
         public Result ChangeFriendFavoriteFlag(Uid userId, NetworkServiceAccountId friendId, bool favoriteFlag)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, favoriteFlag });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                return Result.Success;
+            }
+
+            OpenPakBaas.Update(friendId.Id, friend => friend with { IsFavorite = favoriteFlag });
+
+            _ = OpenPakBaas.PatchFriendAsync(friendId.Id, "replace", "/isFavorite",
+                writer => writer.WriteBooleanValue(favoriteFlag), CancellationToken.None);
 
             return Result.Success;
         }
@@ -771,15 +1439,74 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30121)]
         public Result ChangeFriendOnlineNotificationFlag(Uid userId, NetworkServiceAccountId friendId, bool onlineNotificationFlag)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, onlineNotificationFlag });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                return Result.Success;
+            }
+
+            OpenPakBaas.Update(friendId.Id, friend => friend with { IsOnlineNotification = onlineNotificationFlag });
+
+            _ = OpenPakBaas.PatchFriendAsync(friendId.Id, "add", "/extras/self/isOnlineNotification",
+                writer => writer.WriteBooleanValue(onlineNotificationFlag), CancellationToken.None);
 
             return Result.Success;
         }
 
-        [CmifCommand(30200)]
-        public Result SendFriendRequest(Uid userId, NetworkServiceAccountId friendId, int arg2)
+        [CmifCommand(30130)]
+        public Result ChangeFriendNote(Uid userId, NetworkServiceAccountId friendId, FriendNote note)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, arg2 });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                return Result.Success;
+            }
+
+            string text = OpenPakFriends.Text(note.Note);
+
+            OpenPakBaas.Update(friendId.Id, friend => friend with { Note = text });
+
+            _ = OpenPakBaas.PatchFriendAsync(friendId.Id, "replace", "/friendNote",
+                writer => writer.WriteStringValue(text), CancellationToken.None);
+
+            return Result.Success;
+        }
+
+        // Nothing here keeps a queue of pending friend changes: every 301xx write goes out the
+        // moment it is made. So a flush has nothing to flush, and says so by succeeding. 30131 is
+        // the same command without the port check.
+        [CmifCommand(30190)]
+        public Result SendPendingFriendChange(Uid userId, NetworkServiceAccountId friendId) => RequireManager();
+
+        [CmifCommand(30131)]
+        public Result SendPendingFriendChangeUnchecked(Uid userId, NetworkServiceAccountId friendId) => Result.Success;
+
+        [CmifCommand(30200)]
+        public Result SendFriendRequest(Uid userId, NetworkServiceAccountId friendId, int channel)
+        {
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, channel });
+
+                return Result.Success;
+            }
+
+            // Fire and forget: the POST is a network call and this is the game's thread.
+            _ = OpenPakAccount.Instance.SendFriendRequest?.Invoke(
+                new BaasFriendRequestSend(friendId.Id, RequestChannel(channel)));
 
             return Result.Success;
         }
@@ -788,20 +1515,78 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         public Result SendFriendRequestWithApplicationInfo(
             Uid userId,
             NetworkServiceAccountId friendId,
-            int arg2,
+            int channel,
             ApplicationInfo applicationInfo,
             [Buffer(HipcBufferFlags.In | HipcBufferFlags.Pointer, 0x48)] in InAppScreenName arg4,
             [Buffer(HipcBufferFlags.In | HipcBufferFlags.Pointer, 0x48)] in InAppScreenName arg5)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, arg2, applicationInfo, arg4, arg5 });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, channel, applicationInfo, arg4, arg5 });
+
+                return Result.Success;
+            }
+
+            // Screen name #1 is the target's name as the sender saw it, #2 the sender's
+            // own in-app name — the buffers arrive in that order.
+            (string targetName, string targetLanguage) = OpenPakFriends.ScreenName(arg4);
+            (string ownName, string ownLanguage) = OpenPakFriends.ScreenName(arg5);
+
+            // Fire and forget: the POST is a network call and this is the game's thread.
+            _ = OpenPakAccount.Instance.SendFriendRequest?.Invoke(
+                new BaasFriendRequestSend(friendId.Id, RequestChannel(channel))
+                {
+                    ApplicationId = applicationInfo.ApplicationId.Id,
+                    PresenceGroupId = applicationInfo.PresenceGroupId,
+                    TargetName = targetName,
+                    TargetLanguage = targetLanguage,
+                    OwnName = ownName,
+                    OwnLanguage = ownLanguage,
+                });
 
             return Result.Success;
+        }
+
+        /// <summary>
+        /// The IPC channel number as the channel string the POST carries. The table is the
+        /// module's 1-based one (contract §A.1); anything else goes out as FRIEND_CODE
+        /// rather than failing a request the person asked to send.
+        /// </summary>
+        private static string RequestChannel(int channel)
+        {
+            if (channel is >= 1 and <= 10)
+            {
+                return OpenPakBaas.Channels[channel - 1];
+            }
+
+            Logger.Warning?.Print(LogClass.ServiceFriend,
+                $"[OpenPak] Unknown friend-request channel {channel}; sending as FRIEND_CODE");
+
+            return "FRIEND_CODE";
         }
 
         [CmifCommand(30202)]
         public Result CancelFriendRequest(Uid userId, RequestId requestId)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, requestId });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, requestId });
+
+                return Result.Success;
+            }
+
+            // Fire and forget: the PATCH is a network call and this is the game's thread.
+            _ = OpenPakAccount.Instance.AnswerFriendRequest?.Invoke(requestId.Id, "CANCELED");
 
             return Result.Success;
         }
@@ -809,7 +1594,20 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30203)]
         public Result AcceptFriendRequest(Uid userId, RequestId requestId)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, requestId });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, requestId });
+
+                return Result.Success;
+            }
+
+            // Fire and forget: the PATCH is a network call and this is the game's thread.
+            _ = OpenPakAccount.Instance.AnswerFriendRequest?.Invoke(requestId.Id, "AUTHORIZED");
 
             return Result.Success;
         }
@@ -817,7 +1615,20 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30204)]
         public Result RejectFriendRequest(Uid userId, RequestId requestId)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, requestId });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, requestId });
+
+                return Result.Success;
+            }
+
+            // Fire and forget: the PATCH is a network call and this is the game's thread.
+            _ = OpenPakAccount.Instance.AnswerFriendRequest?.Invoke(requestId.Id, "REJECTED");
 
             return Result.Success;
         }
@@ -825,7 +1636,20 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30205)]
         public Result ReadFriendRequest(Uid userId, RequestId requestId)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, requestId });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, requestId });
+
+                return Result.Success;
+            }
+
+            // Fire and forget: the PATCH is a network call and this is the game's thread.
+            _ = OpenPakAccount.Instance.ReadFriendRequest?.Invoke(requestId.Id);
 
             return Result.Success;
         }
@@ -893,12 +1717,76 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         public Result SendFriendRequestWithExternalApplicationCatalogId(
             Uid userId,
             NetworkServiceAccountId friendId,
-            int arg2,
+            int channel,
             ExternalApplicationCatalogId catalogId,
             [Buffer(HipcBufferFlags.In | HipcBufferFlags.Pointer, 0x48)] in InAppScreenName arg4,
             [Buffer(HipcBufferFlags.In | HipcBufferFlags.Pointer, 0x48)] in InAppScreenName arg5)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, arg2, catalogId, arg4, arg5 });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, channel, catalogId, arg4, arg5 });
+
+                return Result.Success;
+            }
+
+            (string targetName, string targetLanguage) = OpenPakFriends.ScreenName(arg4);
+            (string ownName, string ownLanguage) = OpenPakFriends.ScreenName(arg5);
+
+            // Fire and forget: the POST is a network call and this is the game's thread.
+            _ = OpenPakAccount.Instance.SendFriendRequest?.Invoke(
+                new BaasFriendRequestSend(friendId.Id, RequestChannel(channel))
+                {
+                    CatalogId = $"{catalogId.High:x16}{catalogId.Low:x16}",
+                    TargetName = targetName,
+                    TargetLanguage = targetLanguage,
+                    OwnName = ownName,
+                    OwnLanguage = ownLanguage,
+                });
+
+            return Result.Success;
+        }
+
+        [CmifCommand(30218)]
+        public Result SendFriendRequestWithApplicationInfoV2(
+            Uid userId,
+            NetworkServiceAccountId friendId,
+            int channel,
+            ApplicationInfoV2 applicationInfo,
+            [Buffer(HipcBufferFlags.In | HipcBufferFlags.Pointer, 0x48)] in InAppScreenName arg4,
+            [Buffer(HipcBufferFlags.In | HipcBufferFlags.Pointer, 0x48)] in InAppScreenName arg5)
+        {
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, channel, arg4, arg5 });
+
+                return Result.Success;
+            }
+
+            (string targetName, string targetLanguage) = OpenPakFriends.ScreenName(arg4);
+            (string ownName, string ownLanguage) = OpenPakFriends.ScreenName(arg5);
+
+            // The V2 send is the app route with the acd index the caller named (§A.4.1).
+            _ = OpenPakAccount.Instance.SendFriendRequest?.Invoke(
+                new BaasFriendRequestSend(friendId.Id, RequestChannel(channel))
+                {
+                    ApplicationId = applicationInfo.ApplicationId.Id,
+                    AcdIndex = applicationInfo.AcdIndex,
+                    PresenceGroupId = applicationInfo.PresenceGroupId,
+                    TargetName = targetName,
+                    TargetLanguage = targetLanguage,
+                    OwnName = ownName,
+                    OwnLanguage = ownLanguage,
+                });
 
             return Result.Success;
         }
@@ -915,13 +1803,32 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         public Result SendFriendRequestWithNintendoNetworkIdInfo(
             Uid userId,
             NetworkServiceAccountId friendId,
-            int arg2,
+            int channel,
             MiiName arg3,
             MiiImageUrlParam arg4,
             MiiName arg5,
             MiiImageUrlParam arg6)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, arg2, arg3, arg4, arg5, arg6 });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, channel });
+
+                return Result.Success;
+            }
+
+            // The NNID route carries the sender's own Mii name and image parameter — block A of
+            // the pair — in both extras halves (§A.4.1).
+            _ = OpenPakAccount.Instance.SendFriendRequest?.Invoke(
+                new BaasFriendRequestSend(friendId.Id, RequestChannel(channel))
+                {
+                    MiiName = OpenPakFriends.Text(arg3),
+                    MiiImageUrlParam = OpenPakFriends.Text(arg4),
+                });
 
             return Result.Success;
         }
@@ -997,7 +1904,30 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30810)]
         public Result ChangePresencePermission(Uid userId, int permission)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, permission });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            string value = permission switch
+            {
+                0 => "SELF",
+                1 => "FAVORITE_FRIENDS",
+                2 => "FRIENDS",
+                _ => null,
+            };
+
+            if (value == null)
+            {
+                return FriendResult.InvalidArgument;
+            }
+
+            if (OpenPakFriends.AvailableFor(userId))
+            {
+                _ = OpenPakBaas.PatchUserAsync(
+                    OpenPakBaas.UserPatchBody("/permissions/presence", writer => writer.WriteStringValue(value)),
+                    CancellationToken.None);
+            }
 
             return Result.Success;
         }
@@ -1005,7 +1935,17 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30811)]
         public Result ChangeFriendRequestReception(Uid userId, bool reception)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, reception });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (OpenPakFriends.AvailableFor(userId))
+            {
+                _ = OpenPakBaas.PatchUserAsync(
+                    OpenPakBaas.UserPatchBody("/permissions/friendRequestReception", writer => writer.WriteBooleanValue(reception)),
+                    CancellationToken.None);
+            }
 
             return Result.Success;
         }
@@ -1013,7 +1953,24 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30812)]
         public Result ChangePlayLogPermission(Uid userId, int permission)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, permission });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (permission is not (1 or 2 or 3 or 5))
+            {
+                return FriendResult.InvalidArgument;
+            }
+
+            if (OpenPakFriends.AvailableFor(userId))
+            {
+                // The chosen group keeps the log the server already holds; the other three are
+                // emptied, which is what makes the group the permission (§A.6).
+                _ = OpenPakBaas.PatchUserAsync(
+                    OpenPakBaas.PlayLogPermissionBody(permission, OpenPakBaas.UserSetting?.PlayLogText ?? "[]"),
+                    CancellationToken.None);
+            }
 
             return Result.Success;
         }
@@ -1021,7 +1978,15 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30820)]
         public Result IssueFriendCode(Uid userId)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (OpenPakFriends.AvailableFor(userId))
+            {
+                _ = OpenPakBaas.IssueFriendCodeAsync(CancellationToken.None);
+            }
 
             return Result.Success;
         }
@@ -1029,7 +1994,18 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30830)]
         public Result ClearPlayLog(Uid userId)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (OpenPakFriends.AvailableFor(userId))
+            {
+                // The same four ops with an empty log in the group that carries the permission.
+                _ = OpenPakBaas.PatchUserAsync(
+                    OpenPakBaas.PlayLogPermissionBody(OpenPakBaas.UserSetting?.PlayLogPermission ?? 0, "[]"),
+                    CancellationToken.None);
+            }
 
             return Result.Success;
         }
@@ -1040,12 +2016,65 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             [Buffer(HipcBufferFlags.In | HipcBufferFlags.Pointer)] ReadOnlySpan<NetworkServiceAccountId> friendIds,
             [Buffer(HipcBufferFlags.In | HipcBufferFlags.MapAlias, 0xC00)] in FriendInvitationGameModeDescription description,
             ApplicationInfo applicationInfo,
-            [Buffer(HipcBufferFlags.In | HipcBufferFlags.MapAlias)] ReadOnlySpan<byte> arg4,
-            bool arg5)
-        {
-            string friendIdList = string.Join(", ", friendIds.ToArray());
+            [Buffer(HipcBufferFlags.In | HipcBufferFlags.MapAlias)] ReadOnlySpan<byte> applicationData,
+            bool applicationIdMatch)
+            => SendInvitation(userId, friendIds, description, applicationInfo.ApplicationId.Id, 0,
+                applicationInfo.PresenceGroupId, applicationData, applicationIdMatch);
 
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendIdList, description, applicationInfo, arg5 });
+        [CmifCommand(30901)]
+        public Result SendFriendInvitationV2(
+            Uid userId,
+            [Buffer(HipcBufferFlags.In | HipcBufferFlags.Pointer)] ReadOnlySpan<NetworkServiceAccountId> friendIds,
+            [Buffer(HipcBufferFlags.In | HipcBufferFlags.MapAlias, 0xC00)] in FriendInvitationGameModeDescription description,
+            ApplicationInfoV2 applicationInfo,
+            [Buffer(HipcBufferFlags.In | HipcBufferFlags.MapAlias)] ReadOnlySpan<byte> applicationData,
+            bool applicationIdMatch)
+            => SendInvitation(userId, friendIds, description, applicationInfo.ApplicationId.Id, applicationInfo.AcdIndex,
+                applicationInfo.PresenceGroupId, applicationData, applicationIdMatch);
+
+        /// <summary>
+        /// POST /v2/invitation_groups (invitations doc §3c). The ids are the friends' own BAAS
+        /// user ids, which is what the guest's friend list serves, so they go out as they arrive.
+        /// </summary>
+        private Result SendInvitation(
+            Uid userId,
+            ReadOnlySpan<NetworkServiceAccountId> friendIds,
+            in FriendInvitationGameModeDescription description,
+            ulong applicationId,
+            byte acdIndex,
+            ulong presenceGroupId,
+            ReadOnlySpan<byte> applicationData,
+            bool applicationIdMatch)
+        {
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            // The module refuses anything outside 1..16 receivers or 0x400 bytes of data.
+            if (friendIds.Length is < 1 or > 16 || applicationData.Length > 0x400)
+            {
+                return FriendResult.InvalidArgument;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                return Result.Success;
+            }
+
+            List<string> receivers = [];
+
+            foreach (NetworkServiceAccountId friendId in friendIds)
+            {
+                receivers.Add(friendId.Id.ToString("x16"));
+            }
+
+            List<(string Language, string Text)> messages = OpenPakFriends.InvitationMessages(description);
+            byte[] data = applicationData.ToArray();
+
+            // Fire and forget: the POST is a network call and this is the game's thread.
+            _ = OpenPakBaas.SendInvitationAsync(receivers, applicationId, acdIndex, presenceGroupId,
+                data, messages, applicationIdMatch, CancellationToken.None);
 
             return Result.Success;
         }
@@ -1053,6 +2082,11 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30910)]
         public Result ReadFriendInvitation(Uid userId, [Buffer(HipcBufferFlags.In | HipcBufferFlags.Pointer)] ReadOnlySpan<FriendInvitationId> invitationIds)
         {
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
             List<ulong> ids = [];
 
             foreach (FriendInvitationId id in invitationIds)
@@ -1069,6 +2103,11 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30911)]
         public Result ReadAllFriendInvitations(Uid userId)
         {
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
             _ = OpenPakAccount.Instance.NativeInvitationsRead?.Invoke([]);
 
             return Result.Success;
@@ -1079,7 +2118,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         {
             Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
 
-            return Result.Success;
+            return RequireSystem();
         }
 
         [CmifCommand(40400)]
@@ -1087,7 +2126,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         {
             Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
 
-            return Result.Success;
+            return RequireSystem();
         }
 
         [CmifCommand(49900)]
@@ -1095,7 +2134,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         {
             Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId });
 
-            return Result.Success;
+            return RequireSystem();
         }
 
         protected virtual void Dispose(bool disposing)

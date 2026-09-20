@@ -81,6 +81,8 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         private string _avatarUrl;
         private byte[] _avatar;
         private Task _heartbeat;
+        private readonly SemaphoreSlim _presenceGate = new(1, 1);
+        private string _publishedPresence;
         private IReadOnlyList<OpenPakInvitation> _invitations = [];
 
         /// <summary>The BAAS token presence speaks with: the login's own, user-scoped.</summary>
@@ -125,6 +127,10 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         {
             OpenPakConfig.ProfileChanged += () => _ = SwitchProfileAsync();
             OpenPakPresence.Changed += () => _ = PublishPresenceAsync();
+
+            // A title starting or ending is a presence change of its own: the console publishes
+            // ONLINE when an application registers and INACTIVE when none is running.
+            TitleIDs.CurrentApplication.Event += (_, _) => _ = PublishPresenceAsync();
         }
 
         /// <summary>
@@ -159,6 +165,11 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                 _invitations = [];
                 _senderNames.Clear();
                 _dismissed.Clear();
+                _publishedPresence = null;
+
+                // Another profile is another BAAS user: nothing the guest's friends module cached
+                // for the last one may be read as this one's.
+                OpenPakBaas.Detach();
             }
             finally
             {
@@ -346,7 +357,17 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                 : null;
             _avatar = null;
 
+            // The guest's friends module speaks to BAAS through this session: the REST surface the
+            // sysmodule itself uses (§A), with this user's bearer on it.
+            OpenPakBaas.Attach(_userId, SendBaasAsync);
+
             StartHeartbeat();
+
+            // A console publishes its presence again whenever it reconnects, and syncs its lists
+            // when the account becomes network-ready.
+            _ = PublishPresenceAsync(force: true);
+            _ = SyncFriendsAsync();
+            _ = SyncModuleCachesAsync();
 
             if (_nickname != null)
             {
@@ -621,29 +642,32 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 
                     // The inbox is store-and-forward and changes rarely; every third beat is
                     // often enough to hear about an invitation while the person still cares.
+                    // The request boxes ride along: same pace, same reason.
+                    // The friend list rides along at the module's own list cooldown (30 s): a
+                    // console is pushed friend_request_authorized / friend_deleted and syncs on
+                    // them, and nothing here holds a push connection to be pushed on.
                     if (tick % 3 == 0)
                     {
                         await RefreshInvitationsAsync(CancellationToken.None);
+                        await RefreshFriendRequestsAsync(CancellationToken.None);
+                        await SyncFriendsAsync();
+                        await SyncModuleCachesAsync();
                     }
 
-                    try
-                    {
-                        await PresenceAsync("ONLINE", CancellationToken.None);
-                    }
-                    catch (Exception exception)
-                    {
-                        // Presence is not worth a louder failure than this: the account simply
-                        // goes quiet, which is exactly what it should look like.
-                        Logger.Debug?.Print(LogClass.ServiceAcc, $"[OpenPak] Presence update failed: {exception.Message}");
-                    }
+                    // Presence goes out on a change and on nothing else, as the module publishes
+                    // it; this only carries one that did not reach the server the first time.
+                    await PublishPresenceAsync();
                 }
             });
         }
 
         /// <summary>
-        /// Say we are going, so the account drops offline now rather than when the lease runs out.
-        /// Best effort and briefly: a person closing a window should not wait on a network call,
-        /// and if this never arrives the lease says the same thing half a minute later.
+        /// Say we are going, so the account stops being "in a game" the moment the window closes
+        /// rather than when its lease runs out. The state sent is INACTIVE, which is what a console
+        /// publishes when no application is running: the module has no OFFLINE to send, and the
+        /// server's own lease is what turns a silent client into an offline one.
+        ///
+        /// Best effort and briefly: a person closing a window should not wait on a network call.
         /// </summary>
         public async Task GoOfflineAsync()
         {
@@ -656,7 +680,7 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 
             try
             {
-                await PresenceAsync("OFFLINE", giveUp.Token);
+                await PresenceAsync(PresenceBody("INACTIVE", 0, 0, "{}"), giveUp.Token);
             }
             catch (Exception exception)
             {
@@ -675,20 +699,12 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         /// only while an online-play session is declared open, ONLINE otherwise. appField is
         /// always sent, "{}" when the game set nothing, as a JSON object inside a JSON string.
         /// </summary>
-        private async Task PresenceAsync(string state, CancellationToken cancellationToken)
+        private async Task PresenceAsync(string body, CancellationToken cancellationToken)
         {
-            string titleId = TitleIDs.CurrentApplication.Value.OrDefault();
-
-            OpenPakPresence.State declared = OpenPakPresence.For(OpenPakConfig.ProfileId, titleId);
-
-            string body = state == "OFFLINE" || titleId == null
-                ? $$"""[{"op":"replace","path":"/presence/state","value":"{{state}}"}]"""
-                : $$"""[{"op":"replace","path":"/presence/state","value":"{{(declared.SessionOpen ? "PLAYING" : "ONLINE")}}"},{"op":"replace","path":"/presence/extras/friends/appField","value":{{JsonString(declared.AppField)}}},{"op":"replace","path":"/presence/extras/friends/appInfo:appId","value":"{{titleId}}"},{"op":"replace","path":"/presence/extras/friends/appInfo:presenceGroupId","value":"{{titleId}}"},{"op":"replace","path":"/presence/extras/friends/appInfo:acdIndex","value":0}]""";
-
             using HttpRequestMessage request = new(HttpMethod.Patch,
                 $"https://{BaasHost}/1.0.0/users/{_userId}/device_accounts/{_device.Id}")
             {
-                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+                Content = new StringContent(body, Encoding.UTF8, "application/json-patch+json"),
             };
 
             // Unauthenticated presence is a 401 by design: the server has no idea whose device
@@ -703,8 +719,45 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             if (!response.IsSuccessStatusCode)
             {
                 Logger.Debug?.Print(LogClass.ServiceAcc,
-                    $"[OpenPak] Presence {state} returned {(int)response.StatusCode}");
+                    $"[OpenPak] Presence returned {(int)response.StatusCode}");
+
+                throw new HttpRequestException($"presence returned {(int)response.StatusCode}");
             }
+        }
+
+        /// <summary>
+        /// The JSON-Patch body the module publishes (presence doc §2.3): the state replaced first,
+        /// then the four `friends` extras added in its order. appField is always there, "{}" when
+        /// the game set nothing, as a JSON object inside a JSON string; acdIndex is an unquoted
+        /// number because the console writes it as one.
+        /// </summary>
+        private static string PresenceBody(string state, ulong applicationId, ulong presenceGroupId, string appField)
+            => $$"""[{"op":"replace","path":"/presence/state","value":"{{state}}"},""" +
+                $$"""{"op":"add","path":"/presence/extras/friends/appField","value":{{JsonString(appField)}}},""" +
+                $$"""{"op":"add","path":"/presence/extras/friends/appInfo:appId","value":"{{applicationId:x16}}"},""" +
+                $$"""{"op":"add","path":"/presence/extras/friends/appInfo:acdIndex","value":0},""" +
+                $$"""{"op":"add","path":"/presence/extras/friends/appInfo:presenceGroupId","value":"{{presenceGroupId:x16}}"}]""";
+
+        /// <summary>
+        /// What this console would publish right now: PLAYING while the running title has declared
+        /// an online-play session, ONLINE while one runs without, and INACTIVE when none does. The
+        /// group is the title's NACP presence group, which is what a friend's game compares its own
+        /// against — not the title id, which is only a fallback for a title that declares none.
+        /// </summary>
+        private static string CurrentPresenceBody()
+        {
+            (ulong applicationId, ulong presenceGroupId) = OpenPakPresence.Application();
+
+            if (applicationId == 0)
+            {
+                return PresenceBody("INACTIVE", 0, 0, "{}");
+            }
+
+            OpenPakPresence.State declared = OpenPakPresence.For(OpenPakConfig.ProfileId,
+                TitleIDs.CurrentApplication.Value.OrDefault());
+
+            return PresenceBody(declared.SessionOpen ? "PLAYING" : "ONLINE", applicationId, presenceGroupId,
+                declared.AppField ?? "{}");
         }
 
         /// <summary>
@@ -742,10 +795,24 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 
                 foreach (JsonElement item in items.EnumerateArray())
                 {
-                    string sender = item.GetProperty("sender_id").GetString();
+                    OpenPakInvitation invitation;
 
-                    OpenPakInvitation invitation = InvitationOf(item,
-                        await SenderNameAsync(sender, cancellationToken) ?? sender);
+                    try
+                    {
+                        string sender = item.GetProperty("sender_id").GetString();
+
+                        invitation = InvitationOf(item,
+                            await SenderNameAsync(sender, cancellationToken) ?? sender);
+                    }
+                    catch (Exception exception) when (exception is not OperationCanceledException)
+                    {
+                        // One malformed item is skipped, not the whole inbox: the rest are
+                        // still invitations somebody sent.
+                        Logger.Debug?.Print(LogClass.ServiceAcc,
+                            $"[OpenPak] Skipping a malformed invitation inbox item: {exception.Message}");
+
+                        continue;
+                    }
 
                     if (_dismissed.Contains(invitation.InvitationId))
                     {
@@ -882,13 +949,11 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                 using JsonDocument found = await GetAsync(
                     $"https://{BaasHost}/1.0.0/users?filter.id.$in={Uri.EscapeDataString(senderId)}", cancellationToken);
 
-                foreach (JsonElement user in found.RootElement.GetProperty("items").EnumerateArray())
+                BaasUser user = OpenPakBaas.ParseUsers(found.RootElement).FirstOrDefault();
+
+                if (!string.IsNullOrEmpty(user?.Nickname))
                 {
-                    if (user.TryGetProperty("nickname", out JsonElement nickname) &&
-                        !string.IsNullOrEmpty(nickname.GetString()))
-                    {
-                        return _senderNames[senderId] = nickname.GetString();
-                    }
+                    return _senderNames[senderId] = user.Nickname;
                 }
             }
             catch (Exception exception)

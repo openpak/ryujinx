@@ -97,6 +97,9 @@ namespace Ryujinx.Ava.Systems.OpenPak
 
                 if (live.Count == 0)
                 {
+                    Logger.Info?.Print(LogClass.Application,
+                        "[OpenPak] Catalogue statuses: the site answered with none, keeping the built-in list");
+
                     return false;
                 }
 
@@ -114,11 +117,15 @@ namespace Ryujinx.Ava.Systems.OpenPak
 
                 _live = live;
 
+                Logger.Info?.Print(LogClass.Application,
+                    $"[OpenPak] Catalogue statuses: {live.Count} from the site, {(changed ? "at least one differs from this build" : "all matching this build")}");
+
                 return changed;
             }
             catch (Exception exception)
             {
-                Logger.Debug?.Print(LogClass.Application, $"[OpenPak] Catalogue statuses: {exception.Message}");
+                Logger.Warning?.Print(LogClass.Application,
+                    $"[OpenPak] Catalogue statuses: {exception.Message} — keeping the built-in list");
             }
 
             return false;

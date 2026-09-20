@@ -312,7 +312,7 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
 
                 if (receiveSize > 0)
                 {
-                    NoteTraffic(false, buffer[..receiveSize]);
+                    NoteTraffic(false, buffer[..receiveSize], null);
                 }
 
                 result = LinuxError.SUCCESS;
@@ -371,6 +371,7 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
                 receiveSize = Socket.ReceiveFrom(buffer[..size], ConvertBsdSocketFlags(flags), ref temp);
 
                 remoteEndPoint = (IPEndPoint)temp;
+                NoteTraffic(false, buffer[..receiveSize], remoteEndPoint);
                 result = LinuxError.SUCCESS;
 
                 Logger.Debug?.Print(LogClass.ServiceBsd,
@@ -405,11 +406,14 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
         private int _tapRemaining = TapFrameLimit;
         private IPEndPoint _tapTarget;
 
-        private void NoteTraffic(bool sent, ReadOnlySpan<byte> data)
+        // A datagram socket is never dialled, so it has no PendingRemoteEndPoint and
+        // the tap above never fired for it: P2P — the whole Pia mesh — moved
+        // completely unseen. Each datagram carries its own peer, so pass it in.
+        private void NoteTraffic(bool sent, ReadOnlySpan<byte> data, IPEndPoint peer)
         {
             _tapTarget ??= PendingRemoteEndPoint;
 
-            var target = _tapTarget;
+            var target = peer ?? _tapTarget;
             if (target == null || _tapRemaining <= 0)
             {
                 return;
@@ -453,7 +457,7 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
 
                 if (sendSize > 0)
                 {
-                    NoteTraffic(true, buffer[..sendSize]);
+                    NoteTraffic(true, buffer[..sendSize], null);
                 }
 
                 return LinuxError.SUCCESS;
@@ -483,6 +487,8 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
             try
             {
                 sendSize = Socket.SendTo(buffer[..size], ConvertBsdSocketFlags(flags), remoteEndPoint);
+
+                NoteTraffic(true, buffer[..sendSize], remoteEndPoint);
 
                 Logger.Debug?.Print(LogClass.ServiceBsd,
                     $"SendTo: {sendSize} bytes to {remoteEndPoint}");

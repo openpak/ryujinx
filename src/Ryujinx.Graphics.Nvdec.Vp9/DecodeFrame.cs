@@ -1724,7 +1724,20 @@ namespace Ryujinx.Graphics.Nvdec.Vp9
             {
                 ref TileWorkerData tileData = ref cmPtr.Value.TileWorkerData[n + totalTiles];
 
-                if (!DecodeTileCol(ref tileData, ref cmPtr.Value, tileBuffers.AsSpan()))
+                // A malformed tile raises InternalErrorException from deep inside
+                // DecodeTileCol. Single-threaded decoding catches that in
+                // Decoder.Decode and drops the frame, but out here it leaves a
+                // Parallel.For worker and kills the process instead. A tile we
+                // cannot read is a corrupt frame, which is what the false return
+                // below already means.
+                try
+                {
+                    if (!DecodeTileCol(ref tileData, ref cmPtr.Value, tileBuffers.AsSpan()))
+                    {
+                        cmPtr.Value.Mb.Corrupted = true;
+                    }
+                }
+                catch (InternalErrorException)
                 {
                     cmPtr.Value.Mb.Corrupted = true;
                 }

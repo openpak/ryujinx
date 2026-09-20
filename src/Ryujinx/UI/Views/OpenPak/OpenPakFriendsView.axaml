@@ -5,7 +5,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:ext="clr-namespace:Ryujinx.Ava.Common.Markup"
-    xmlns:helpers="clr-namespace:Ryujinx.Ava.UI.Helpers"
+    xmlns:ui="clr-namespace:FluentAvalonia.UI.Controls;assembly=FluentAvalonia"
     xmlns:viewModels="clr-namespace:Ryujinx.Ava.UI.ViewModels"
     mc:Ignorable="d"
     x:DataType="viewModels:OpenPakViewModel">
@@ -56,15 +56,27 @@
                                         <Button
                                             Grid.Column="1"
                                             Classes="accent"
+                                            Padding="8"
+                                            MinWidth="0"
+                                            MinHeight="0"
+                                            VerticalAlignment="Center"
                                             Click="OnAccept"
                                             IsVisible="{Binding CanAccept}"
-                                            Content="{ext:Locale Dialog_OpenPak_FriendsAccept}" />
+                                            ToolTip.Tip="{ext:Locale Dialog_OpenPak_FriendsAccept}">
+                                            <ui:FASymbolIcon Symbol="Accept" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Button>
                                         <!-- Declining someone else's request and withdrawing your own
-                                             are the same call, so the button only changes its word. -->
+                                             are the same call, so only the tooltip changes its word. -->
                                         <Button
                                             Grid.Column="2"
+                                            Padding="8"
+                                            MinWidth="0"
+                                            MinHeight="0"
+                                            VerticalAlignment="Center"
                                             Click="OnDecline"
-                                            Content="{Binding DeclineText}" />
+                                            ToolTip.Tip="{Binding DeclineText}">
+                                            <ui:FASymbolIcon Symbol="Dismiss" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Button>
                                     </Grid>
                                 </Border>
                             </DataTemplate>
@@ -78,57 +90,92 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="viewModels:OpenPakFriendModel">
                             <Border Classes="settings row">
-                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
-                                    <!-- Presence as a dot: the list is scanned, not read. -->
-                                    <Panel Grid.Column="0" Width="34" Height="34">
-                                        <Border CornerRadius="17" Background="{DynamicResource ThemeControlBorderColor}">
-                                            <TextBlock
-                                                Text="{Binding Initial}"
-                                                FontWeight="SemiBold"
-                                                HorizontalAlignment="Center"
-                                                VerticalAlignment="Center"
-                                                Margin="0" />
-                                        </Border>
-                                        <!-- Over the initial, which stays visible while the picture
-                                             is on its way and for anyone whose fetch fails. -->
-                                        <Border CornerRadius="17" ClipToBounds="True">
-                                            <Image Source="{Binding Avatar}" Stretch="UniformToFill" />
-                                        </Border>
-                                        <Ellipse
-                                            Width="11"
-                                            Height="11"
-                                            HorizontalAlignment="Right"
-                                            VerticalAlignment="Bottom"
-                                            Stroke="{DynamicResource ThemeDarkColor}"
-                                            StrokeThickness="2"
-                                            Fill="{Binding PresenceBrush}" />
-                                    </Panel>
-                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                        <TextBlock Classes="title" Text="{Binding DisplayName}" />
-                                        <!-- The game's own icon out of this machine's library, for a
-                                             title that is installed here: it is the same picture on
-                                             the same shelf, so it says which game without reading. -->
-                                        <StackPanel Orientation="Horizontal" Spacing="6">
-                                            <Image
-                                                Width="16"
-                                                Height="16"
-                                                VerticalAlignment="Center"
-                                                IsVisible="{Binding Playing}"
-                                                Source="{Binding TitleIcon, Converter={x:Static helpers:BitmapArrayValueConverter.Instance}}" />
-                                            <TextBlock Classes="sub" Text="{Binding Status}" VerticalAlignment="Center" />
+                                <StackPanel>
+                                    <!-- A click expands the row in place: the collapsed line is a
+                                         scan, and the detail panel underneath is what somebody
+                                         actually asked to see. -->
+                                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="12" Cursor="Hand" Tapped="OnToggleExpand">
+                                        <!-- Presence as a dot: the list is scanned, not read. -->
+                                        <Panel Grid.Column="0" Width="34" Height="34">
+                                            <Border CornerRadius="17" Background="{DynamicResource ThemeControlBorderColor}">
+                                                <TextBlock
+                                                    Text="{Binding Initial}"
+                                                    FontWeight="SemiBold"
+                                                    HorizontalAlignment="Center"
+                                                    VerticalAlignment="Center"
+                                                    Margin="0" />
+                                            </Border>
+                                            <!-- Over the initial, which stays visible while the picture
+                                                 is on its way and for anyone whose fetch fails. -->
+                                            <Border CornerRadius="17" ClipToBounds="True">
+                                                <Image Source="{Binding Avatar}" Stretch="UniformToFill" />
+                                            </Border>
+                                            <Ellipse
+                                                Width="11"
+                                                Height="11"
+                                                HorizontalAlignment="Right"
+                                                VerticalAlignment="Bottom"
+                                                Stroke="{DynamicResource ThemeDarkColor}"
+                                                StrokeThickness="2"
+                                                Fill="{Binding PresenceBrush}" />
+                                        </Panel>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock Classes="title" Text="{Binding DisplayName}" />
+                                            <TextBlock Classes="sub" Text="{Binding Status}" />
                                         </StackPanel>
-                                    </StackPanel>
-                                    <!-- Both are rare and asked about first, so they wait behind
-                                         one button instead of shouting from every row. -->
-                                    <Button Grid.Column="2" Content="•••" VerticalAlignment="Center">
-                                        <Button.Flyout>
-                                            <MenuFlyout Placement="BottomEdgeAlignedRight">
-                                                <MenuItem Click="OnRemove" Header="{ext:Locale Dialog_OpenPak_FriendsRemove}" />
-                                                <MenuItem Click="OnBlock" Header="{ext:Locale Dialog_OpenPak_FriendsBlock}" />
-                                            </MenuFlyout>
-                                        </Button.Flyout>
-                                    </Button>
-                                </Grid>
+                                        <!-- Both are rare and asked about first, so each gets its
+                                             own icon rather than a menu opened for nothing else. -->
+                                        <Button
+                                            Grid.Column="2"
+                                            Padding="8"
+                                            MinWidth="0"
+                                            MinHeight="0"
+                                            VerticalAlignment="Center"
+                                            Click="OnRemove"
+                                            ToolTip.Tip="{ext:Locale Dialog_OpenPak_FriendsRemove}">
+                                            <ui:FASymbolIcon Symbol="Delete" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Button>
+                                        <Button
+                                            Grid.Column="3"
+                                            Padding="8"
+                                            MinWidth="0"
+                                            MinHeight="0"
+                                            VerticalAlignment="Center"
+                                            Click="OnBlock"
+                                            ToolTip.Tip="{ext:Locale Dialog_OpenPak_FriendsBlock}">
+                                            <ui:FASymbolIcon Symbol="BlockContact" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Button>
+                                        <!-- The one hint that there is more here: which way is
+                                             whichever a click would do next. -->
+                                        <ui:FASymbolIcon Grid.Column="4" Symbol="ChevronDown" Opacity="0.6" VerticalAlignment="Center" IsVisible="{Binding !IsExpanded}" />
+                                        <ui:FASymbolIcon Grid.Column="4" Symbol="ChevronUp" Opacity="0.6" VerticalAlignment="Center" IsVisible="{Binding IsExpanded}" />
+                                    </Grid>
+
+                                    <!-- The detail panel: the game's own picture and name, which
+                                         console they are on, when their session began, and the
+                                         friendship itself — nothing a scan of the list needs, and
+                                         nothing more than a click asked for. -->
+                                    <Grid
+                                        IsVisible="{Binding IsExpanded}"
+                                        ColumnDefinitions="Auto,*"
+                                        ColumnSpacing="10"
+                                        Margin="46,10,0,0">
+                                        <Panel Grid.Column="0" Width="48" Height="48" VerticalAlignment="Top" IsVisible="{Binding HasTitleName}">
+                                            <Border
+                                                BorderBrush="{DynamicResource AppListHoverBackgroundColor}"
+                                                BorderThickness="1"
+                                                CornerRadius="4" />
+                                            <Image Source="{Binding GameIcon}" Stretch="UniformToFill" />
+                                        </Panel>
+                                        <StackPanel Grid.Column="1" Spacing="2">
+                                            <TextBlock Classes="title" Text="{Binding TitleName}" TextWrapping="Wrap" IsVisible="{Binding HasTitleName}" />
+                                            <TextBlock Classes="sub" Text="{Binding ConsoleText}" IsVisible="{Binding HasConsole}" />
+                                            <TextBlock Classes="sub" Text="{Binding SessionSinceText}" IsVisible="{Binding HasSessionSince}" />
+                                            <TextBlock Classes="sub" Text="{Binding FriendCodeText}" IsVisible="{Binding HasFriendCode}" />
+                                            <TextBlock Classes="sub" Text="{Binding FriendsSinceText}" IsVisible="{Binding HasFriendsSince}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </StackPanel>
                             </Border>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>

@@ -916,6 +916,7 @@ namespace Ryujinx.Ava.UI.ViewModels
             // the call that holds the page busy — a friend list of twenty would leave every button
             // on the page disabled until the twentieth picture arrived.
             _ = LoadFriendAvatarsAsync(Friends.ToArray());
+            _ = LoadFriendGamesAsync(Friends.ToArray());
         }
 
         /// <summary>
@@ -931,6 +932,23 @@ namespace Ryujinx.Ava.UI.ViewModels
             catch (Exception exception)
             {
                 // A picture that did not arrive is a row with an initial in it, and nothing else.
+                Logger.Debug?.Print(LogClass.Application, $"[OpenPak] {exception.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Each playing friend's game, resolved off the page's own turn: the catalogue's name and
+        /// icon for whoever this machine's own library could not already name.
+        /// </summary>
+        private async Task LoadFriendGamesAsync(IReadOnlyList<OpenPakFriendModel> friends)
+        {
+            try
+            {
+                await Task.WhenAll(friends.Select(friend => friend.LoadGameAsync(_cancellation.Token)));
+            }
+            catch (Exception exception)
+            {
+                // A game that could not be named stays "Playing" with no name, not this id.
                 Logger.Debug?.Print(LogClass.Application, $"[OpenPak] {exception.Message}");
             }
         }
@@ -992,16 +1010,14 @@ namespace Ryujinx.Ava.UI.ViewModels
             await Dispatcher.UIThread.InvokeAsync(() => Avatar = new Bitmap(new MemoryStream(image)));
         }
 
-        /// <summary>A title id as the person knows it, falling back to the id when it is not installed.</summary>
+        /// <summary>
+        /// A title id as this machine's own library names it, or empty when it is not installed
+        /// here. Never the id itself: a hex string is not a name to anybody looking at this page,
+        /// and a caller with a catalogue to ask (<see cref="OpenPakFriendModel.LoadGameAsync"/>)
+        /// falls back to that before it falls back to silence.
+        /// </summary>
         private string NameOf(string titleId)
-        {
-            if (string.IsNullOrEmpty(titleId))
-            {
-                return string.Empty;
-            }
-
-            return ApplicationOf(titleId)?.Name ?? titleId.ToUpperInvariant();
-        }
+            => string.IsNullOrEmpty(titleId) ? string.Empty : ApplicationOf(titleId)?.Name ?? string.Empty;
 
         /// <summary>The installed title with this id, or null. The picture comes from here too.</summary>
         private ApplicationData ApplicationOf(string titleId)

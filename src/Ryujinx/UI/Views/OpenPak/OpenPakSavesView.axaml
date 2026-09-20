@@ -89,9 +89,32 @@
                                     <!-- Up and down need somewhere on this machine to read from or
                                          write to; deleting the cloud copy does not, so a title that
                                          is not installed here can still be cleared out. -->
-                                    <Button Click="OnDownload" IsVisible="{Binding Installed}" Content="{ext:Locale Dialog_OpenPak_SavesDownload}" />
-                                    <Button Click="OnUpload" IsVisible="{Binding Installed}" Content="{ext:Locale Dialog_OpenPak_SavesUpload}" />
-                                    <Button Click="OnDelete" Content="{ext:Locale Dialog_OpenPak_SavesDelete}" />
+                                    <Button
+                                        Padding="8"
+                                        MinWidth="0"
+                                        MinHeight="0"
+                                        Click="OnDownload"
+                                        IsVisible="{Binding Installed}"
+                                        ToolTip.Tip="{ext:Locale Dialog_OpenPak_SavesDownload}">
+                                        <ui:FASymbolIcon Symbol="Download" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Button>
+                                    <Button
+                                        Padding="8"
+                                        MinWidth="0"
+                                        MinHeight="0"
+                                        Click="OnUpload"
+                                        IsVisible="{Binding Installed}"
+                                        ToolTip.Tip="{ext:Locale Dialog_OpenPak_SavesUpload}">
+                                        <ui:FASymbolIcon Symbol="Upload" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Button>
+                                    <Button
+                                        Padding="8"
+                                        MinWidth="0"
+                                        MinHeight="0"
+                                        Click="OnDelete"
+                                        ToolTip.Tip="{ext:Locale Dialog_OpenPak_SavesDelete}">
+                                        <ui:FASymbolIcon Symbol="Delete" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Button>
                                 </StackPanel>
                             </Grid>
                         </Border>

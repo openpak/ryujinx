@@ -1,5 +1,6 @@
 using Ryujinx.Common.Logging;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -36,6 +37,12 @@ namespace Ryujinx.OpenPak
         private string _baseUrl;
         private string _token;
         private bool _tokenLoaded;
+
+        // The website's own title catalogue, for naming a friend's game this machine has never
+        // installed. Loaded once per site — it does not change under a running session — and
+        // cleared with everything else whenever the address does.
+        private readonly ConcurrentDictionary<string, string> _catalogueNames = new(StringComparer.OrdinalIgnoreCase);
+        private bool _catalogueLoaded;
 
         private OpenPakApi()
         {
@@ -124,6 +131,8 @@ namespace Ryujinx.OpenPak
             _tokenLoaded = false;
             _token = null;
             _baseUrl = OpenPakConfig.WebsiteUrl;
+            _catalogueNames.Clear();
+            _catalogueLoaded = false;
         }
 
         private HttpClient Client
@@ -416,6 +425,44 @@ namespace Ryujinx.OpenPak
 
         public Task<string> UnblockAsync(string accountId, CancellationToken cancellationToken)
             => PostAsync("/api/v1/me/friends/unblock", AccountBody(accountId), cancellationToken);
+
+        /// <summary>
+        /// A title's name out of the website's own catalogue, for a friend playing something this
+        /// machine has never installed: an id is not a name to anybody. The whole catalogue comes
+        /// down on first ask and is kept for the site — asking per friend would be one request per
+        /// stranger's game, and the catalogue does not change under a running session.
+        /// </summary>
+        public async Task<string> CatalogueNameAsync(string titleId, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrEmpty(titleId))
+            {
+                return null;
+            }
+
+            if (!_catalogueLoaded)
+            {
+                using JsonDocument document = await GetAsync("/api/v1/titles", cancellationToken);
+
+                if (document != null && document.RootElement.TryGetProperty("titles", out JsonElement titles) &&
+                    titles.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (JsonElement title in titles.EnumerateArray())
+                    {
+                        string id = String(title, "title_id");
+                        string name = String(title, "name");
+
+                        if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(name))
+                        {
+                            _catalogueNames[id] = name;
+                        }
+                    }
+
+                    _catalogueLoaded = true;
+                }
+            }
+
+            return _catalogueNames.TryGetValue(titleId, out string resolved) ? resolved : null;
+        }
 
         // ---- the Switch identity ----
 
@@ -1073,8 +1120,10 @@ namespace Ryujinx.OpenPak
             {
                 bool online = false;
                 string titleId = string.Empty;
+                string ns = "switch";
                 int status = 0;
                 string appField = null;
+                DateTime? since = null;
 
                 if (friend.TryGetProperty("presence", out JsonElement presence))
                 {
@@ -1082,6 +1131,14 @@ namespace Ryujinx.OpenPak
                     titleId = PresenceTitleId(presence);
                     status = PresenceState(presence);
                     appField = String(presence, "app_field");
+                    since = UnixTime(presence, "since");
+
+                    // "switch" unless the presence names another platform: a friend elsewhere
+                    // carries no app id, by design, but still says where they are.
+                    if (String(presence, "namespace") is { Length: > 0 } presenceNamespace)
+                    {
+                        ns = presenceNamespace;
+                    }
                 }
 
                 friends.Add(new OpenPakFriend(
@@ -1089,13 +1146,14 @@ namespace Ryujinx.OpenPak
                     String(friend, "name"),
                     online,
                     titleId,
-                    "switch",
-                    null)
+                    ns,
+                    since)
                 {
                     Pid = Number(friend, "pid"),
                     FriendCode = String(friend, "friend_code"),
                     Status = status,
                     AppField = appField,
+                    FriendsSince = UnixTime(friend, "friends_since"),
                 });
             }
 
@@ -1277,6 +1335,14 @@ namespace Ryujinx.OpenPak
                     DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out DateTime parsed)
                         ? parsed
                         : null;
+
+        /// <summary>A unix-seconds number, as the adapter sends `since` and `friends_since`. Zero
+        /// or absent reads as no answer, the same as a route that carries no time at all.</summary>
+        private static DateTime? UnixTime(JsonElement element, string property)
+            => element.TryGetProperty(property, out JsonElement value) &&
+                value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out long seconds) && seconds > 0
+                    ? DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime
+                    : null;
 
         /// <summary>One object, written straight out: no reflection, so trimming cannot break it.</summary>
         private static string Json(Action<Utf8JsonWriter> body)

@@ -38,6 +38,9 @@ namespace Ryujinx.HLE.HOS.Services
             public byte[] InputSnapshot;
         }
 
+        // How long the server loop waits for the next IPC while a poll or select is parked.
+        private const long DeferredPollRecheckNs = 1_000_000;
+
         private readonly List<DeferredPoll> _deferredPolls = [];
         private readonly object _deferredPollsLock = new();
         private ulong _heapAddr;
@@ -277,7 +280,22 @@ namespace Ryujinx.HLE.HOS.Services
                     }
                 }
 
-                Result rc = _context.Syscall.ReplyAndReceive(out int signaledIndex, handles.AsSpan(0, handleCount), replyTargetHandle, -1);
+                // A parked poll/select is only re-checked at the top of this loop, so while one is
+                // parked the loop must not sit in an infinite wait: its socket can become readable
+                // with no IPC and no eventfd write to wake us, and the park would then run its full
+                // window. (It used to be woken incidentally by the eventfd write storm; with that
+                // storm gone the latency became visible as a minute-long login stall.) Re-check at
+                // 1 ms while anything is parked, which is the rate the deferred path assumes.
+                bool hasParkedPolls;
+
+                lock (_deferredPollsLock)
+                {
+                    hasParkedPolls = _deferredPolls.Count != 0;
+                }
+
+                long receiveTimeout = hasParkedPolls ? DeferredPollRecheckNs : -1;
+
+                Result rc = _context.Syscall.ReplyAndReceive(out int signaledIndex, handles.AsSpan(0, handleCount), replyTargetHandle, receiveTimeout);
 
                 _selfThread.HandlePostSyscall();
 

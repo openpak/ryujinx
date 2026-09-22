@@ -794,6 +794,9 @@ namespace Ryujinx.HLE.HOS
 
             int GetIndex(string buildId) => buildIds.FindIndex(id => id == buildId); // O(n) but list is small
 
+            // Temporary probe aid: name the build IDs so IPS filenames can target them.
+            Logger.Info?.Print(LogClass.ModLoader, $"Program build IDs: {string.Join(", ", buildIds)}");
+
             // Collect patches
             foreach (Mod<DirectoryInfo> mod in mods)
             {

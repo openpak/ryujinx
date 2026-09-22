@@ -101,6 +101,7 @@ namespace Ryujinx.Horizon.Sdk.Ngc.Detail
                 }
 
                 result = _fsClient.MountSystemData(MountName, DataId);
+                Ryujinx.Common.Logging.Logger.Info?.Print(Ryujinx.Common.Logging.LogClass.ServiceNgc, $"[OpenPak] NgWord mount result=0x{result.ErrorCode:x} cache={dataCacheSize}");
                 if (result.IsFailure)
                 {
                     // Official firmware would return the result here,

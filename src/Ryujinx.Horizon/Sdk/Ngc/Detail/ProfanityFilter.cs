@@ -155,6 +155,17 @@ namespace Ryujinx.Horizon.Sdk.Ngc.Detail
         {
             maskedWordsCount = 0;
 
+            // OpenPak diagnostic: log every screened string and verdict.
+            try
+            {
+                int previewLen = text.IndexOf((byte)0);
+                if (previewLen < 0) previewLen = System.Math.Min(text.Length, 128);
+                else previewLen = System.Math.Min(previewLen, 128);
+                string preview = System.Text.Encoding.UTF8.GetString(text.Slice(0, previewLen));
+                Ryujinx.Common.Logging.Logger.Info?.Print(Ryujinx.Common.Logging.LogClass.ServiceNgc, $"[OpenPak] ProfanityFilter in={preview} region=0x{regionMask:x}");
+            }
+            catch { }
+
             Span<byte> output = text;
             Span<byte> convertedText = new byte[MaxBufferLength];
             Span<sbyte> deltaTable = new sbyte[MaxBufferLength];
@@ -219,6 +230,13 @@ namespace Ryujinx.Horizon.Sdk.Ngc.Detail
                 int unprocessedLength = output.Length - nullTerminatorIndex - 1;
                 output.Slice(nullTerminatorIndex + 1, unprocessedLength).CopyTo(output.Slice(length, unprocessedLength));
             }
+
+            // OpenPak diagnostic: log the verdict.
+            try
+            {
+                Ryujinx.Common.Logging.Logger.Info?.Print(Ryujinx.Common.Logging.LogClass.ServiceNgc, $"[OpenPak] ProfanityFilter verdict=Success masked={maskedWordsCount}");
+            }
+            catch { }
 
             return Result.Success;
         }

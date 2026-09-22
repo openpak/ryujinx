@@ -1,12 +1,13 @@
 name: release
 
-# The OpenPak build of Ryujinx. Every push to the default branch publishes the four desktop
-# targets (Linux x64 and arm64, Windows x64, macOS universal) as workflow artifacts; an openpak-v* tag
-# also attaches them to a GitHub Release. Upstream's
-# Forgejo workflows stay untouched in .forgejo/ for merging; this one is ours.
+# The OpenPak build of Ryujinx. An openpak-v* tag publishes the four desktop targets
+# (Linux x64 and arm64, Windows x64, macOS universal) as workflow artifacts and attaches
+# them to a GitHub Release; a manual dispatch builds the artifacts alone. Plain pushes to
+# master do not build: the single self-hosted runner would spend most of an hour on every
+# commit and block every other repo's deploy behind it. Upstream's Forgejo workflows stay
+# untouched in .forgejo/ for merging; this one is ours.
 on:
   push:
-    branches: [master]
     tags: ['openpak-v*']
   workflow_dispatch:
 

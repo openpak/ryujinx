@@ -34,7 +34,16 @@ namespace Ryujinx.Horizon.Ngc.Ipc
         {
             lock (_profanityFilter)
             {
-                return _profanityFilter.CheckProfanityWords(out checkMask, text, regionMask, option);
+                Result result = _profanityFilter.CheckProfanityWords(out checkMask, text, regionMask, option);
+                // OpenPak diagnostic: every Check the game makes, with its verdict.
+                try
+                {
+                    int n = text.IndexOf((byte)0); if (n < 0) n = text.Length; n = Math.Min(n, 128);
+                    Ryujinx.Common.Logging.Logger.Info?.Print(Ryujinx.Common.Logging.LogClass.ServiceNgc,
+                        $"[OpenPak] Check in={System.Text.Encoding.UTF8.GetString(text[..n])} region=0x{regionMask:x} -> result=0x{result.ErrorCode:x} mask=0x{checkMask:x}");
+                }
+                catch { }
+                return result;
             }
         }
 

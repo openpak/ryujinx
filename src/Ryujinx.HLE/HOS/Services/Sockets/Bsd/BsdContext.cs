@@ -2,6 +2,7 @@ using Ryujinx.HLE.HOS.Services.Sockets.Bsd.Types;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Net.Sockets;
 using System.Numerics;
 using System.Threading;
 
@@ -43,6 +44,29 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
             }
 
             return null;
+        }
+
+        // A blocking poll is served on the same BSD service thread as every
+        // send/receive for this process. If a datagram socket is active, a long
+        // poll on an unrelated TCP socket can therefore hold up the real-time
+        // UDP transport for its entire timeout.
+        public bool HasDatagramSocket
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    foreach (IFileDescriptor file in _fds)
+                    {
+                        if (file is ISocket socket && socket.SocketType == SocketType.Dgram)
+                        {
+                            return true;
+                        }
+                    }
+                }
+
+                return false;
+            }
         }
 
         public List<IFileDescriptor> RetrieveFileDescriptorsFromMask(ReadOnlySpan<byte> mask)

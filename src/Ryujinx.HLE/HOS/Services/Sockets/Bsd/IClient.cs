@@ -22,6 +22,14 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
         // An eventfd write completes the park immediately, so this only bounds an idle worker.
         private const int SelectParkWindowMs = 100;
 
+        // Ordinary poll cannot use the deferred IPC path: several NEX titles
+        // exhaust their synchronous-request slots when it is deferred. It also
+        // cannot sleep for a title's full 100 ms while Pia UDP is active,
+        // because both calls share this single BSD service thread. Slice that
+        // wait instead; the guest can issue the remaining poll iterations while
+        // UDP send/receive calls get a chance to run between them.
+        private const int ConcurrentUdpPollSliceMs = 5;
+
         private static readonly List<IPollManager> _pollManagers =
         [
             EventFileDescriptorPollManager.Instance,
@@ -30,6 +38,7 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
 
         private BsdContext _context;
         private readonly bool _isPrivileged;
+        private bool _loggedConcurrentUdpPollSlicing;
 
         public IClient(ServiceCtx context, bool isPrivileged) : base(context.Device.System.BsdServer)
         {
@@ -781,8 +790,23 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
                     // [Nextendo beta] NEX games (Splatoon 2 / MK8 Deluxe / SSBU) issue an ordinary
                     // BLOCKING poll while their async connect completes. They have no eventfd, so the
                     // eventfd-only deferred path above must NOT apply to them — deferring their poll broke
-                    // the IPC (SendSyncRequest -> OutOfResource -> the game aborts on connect). Keep the
-                    // original Ryujinx behaviour: let the PollManager block for `timeout` ms internally.
+                    // the IPC (SendSyncRequest -> OutOfResource -> the game aborts on connect). Keep this
+                    // path synchronous, but bound each wait while a UDP transport shares the BSD thread.
+                    int effectiveTimeout = timeout;
+
+                    if (_context.HasDatagramSocket &&
+                        (timeout == -1 || timeout > ConcurrentUdpPollSliceMs))
+                    {
+                        effectiveTimeout = ConcurrentUdpPollSliceMs;
+
+                        if (!_loggedConcurrentUdpPollSlicing)
+                        {
+                            _loggedConcurrentUdpPollSlicing = true;
+                            Logger.Info?.Print(LogClass.ServiceBsd,
+                                $"Slicing blocking poll from {timeout} ms to {effectiveTimeout} ms while UDP is active");
+                        }
+                    }
+
                     for (int i = 0; i < eventsByPollManager.Length; i++)
                     {
                         if (eventsByPollManager[i].Count == 0)
@@ -790,7 +814,7 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
                             continue;
                         }
 
-                        errno = _pollManagers[i].Poll(eventsByPollManager[i], timeout, out updateCount);
+                        errno = _pollManagers[i].Poll(eventsByPollManager[i], effectiveTimeout, out updateCount);
 
                         if (IsUnexpectedLinuxError(errno))
                         {

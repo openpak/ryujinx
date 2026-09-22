@@ -117,7 +117,17 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
                     {
                         outputEvents |= PollEventTypeMask.Error;
 
-                        if (!socket.Connected || !socket.IsBound)
+                        // POSIX may report an ICMP port-unreachable error for a UDP
+                        // hole-punch probe. A datagram socket is never "connected"
+                        // in the managed sense, but that is not a peer disconnect
+                        // and must not be exposed to Pia as POLLHUP: during NAT
+                        // traversal the first probes routinely land on a
+                        // still-closed port, and treating that as a disconnect
+                        // kills the mesh join (Mario Golf: join dies, host hangs,
+                        // joiner gets EndParticipation). Ported from
+                        // NextendoNetwork/Ryujinx-Nextendo PR #28.
+                        if (socket.SocketType == SocketType.Stream &&
+                            (!socket.Connected || !socket.IsBound))
                         {
                             outputEvents |= PollEventTypeMask.Disconnected;
                         }

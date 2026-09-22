@@ -125,9 +125,19 @@ namespace Ryujinx.Ava.Common
                 return false;
             }
 
-            SaveDataFilter filter = SaveDataFilter.Make(application.Id, SaveDataType.Account,
-                _accountManager.LastOpenedUser.UserId.ToLibHac(),
-                saveDataId: default, index: default);
+            // A title keeps its progress either per user (Account save) or per console
+            // (Device save) — Animal Crossing: New Horizons is the device kind, its whole
+            // island in one save nobody "owns". Asking for an account save it never
+            // declares creates nothing and fails the lookup with 2002-1002 every time the
+            // game closes. The control property says which kind the title has.
+            ref ApplicationControlProperty control = ref application.ControlHolder.Value;
+            bool deviceSave = control.UserAccountSaveDataSize == 0 && control.DeviceSaveDataSize > 0;
+
+            SaveDataFilter filter = deviceSave
+                ? SaveDataFilter.Make(application.Id, SaveDataType.Device, userId: default, saveDataId: default, index: default)
+                : SaveDataFilter.Make(application.Id, SaveDataType.Account,
+                    _accountManager.LastOpenedUser.UserId.ToLibHac(),
+                    saveDataId: default, index: default);
 
             if (!TryFindSaveData(application.Name, application.Id, application.ControlHolder, in filter, out ulong saveDataId))
             {

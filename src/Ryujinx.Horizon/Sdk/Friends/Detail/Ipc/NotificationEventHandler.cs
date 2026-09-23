@@ -1,3 +1,4 @@
+using Ryujinx.Common.Logging;
 using Ryujinx.Horizon.Sdk.Account;
 using Ryujinx.OpenPak;
 using System;
@@ -69,9 +70,22 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
                 handlers = [.. _handlers];
             }
 
+            // The callers are OpenPak's background threads, and signalling a guest event needs the
+            // kernel's thread-static context, which only a guest or service thread carries. The
+            // notification is still queued before the signal throws, so the guest sees it on its
+            // next Pop; the throw itself used to end OpenPak's heartbeat, presence with it.
+            // ponytail: the event stays unsignalled off-thread; marshal the signal onto the
+            // friends service thread if a guest ever waits on it and misses an update.
             foreach (NotificationEventHandler handler in handlers)
             {
-                signal(handler);
+                try
+                {
+                    signal(handler);
+                }
+                catch (Exception exception)
+                {
+                    Logger.Debug?.Print(LogClass.ServiceFriend, $"Friends notification not signalled off the service thread: {exception.Message}");
+                }
             }
         }
 

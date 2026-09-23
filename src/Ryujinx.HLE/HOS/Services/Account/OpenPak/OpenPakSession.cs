@@ -682,12 +682,24 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                     // The friend list rides along at the module's own list cooldown (30 s): a
                     // console is pushed friend_request_authorized / friend_deleted and syncs on
                     // them, and nothing here holds a push connection to be pushed on.
+                    //
+                    // Nothing thrown here may end the loop: it is the only thing renewing the
+                    // presence below, and a Task.Run that faults does so silently. A friend coming
+                    // online threw out of the friend-list sync, and the person here went offline
+                    // two minutes later for the rest of the session (2026-09-22).
                     if (tick % 3 == 0)
                     {
-                        await RefreshInvitationsAsync(CancellationToken.None);
-                        await RefreshFriendRequestsAsync(CancellationToken.None);
-                        await SyncFriendsAsync();
-                        await SyncModuleCachesAsync();
+                        try
+                        {
+                            await RefreshInvitationsAsync(CancellationToken.None);
+                            await RefreshFriendRequestsAsync(CancellationToken.None);
+                            await SyncFriendsAsync();
+                            await SyncModuleCachesAsync();
+                        }
+                        catch (Exception exception)
+                        {
+                            Logger.Warning?.Print(LogClass.ServiceAcc, $"[OpenPak] Background sync failed: {exception}");
+                        }
                     }
 
                     // Presence goes out on a change, as the module publishes it -- and once

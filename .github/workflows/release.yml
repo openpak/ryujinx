@@ -1,6 +1,6 @@
 name: release
 
-# The OpenPak build of Ryujinx. An openpak-v* tag publishes the four desktop targets
+# The OpenPak build of Ryujinx. A vX.Y.Z tag publishes the four desktop targets
 # (Linux x64 and arm64, Windows x64, macOS universal) on a GitHub Release, each build attaching
 # its own files; a manual dispatch builds workflow artifacts alone. Plain pushes to
 # master do not build: the single self-hosted runner would spend most of an hour on every
@@ -8,7 +8,7 @@ name: release
 # untouched in .forgejo/ for merging; this one is ours.
 on:
   push:
-    tags: ['openpak-v*']
+    tags: ['v*.*.*']
   workflow_dispatch:
 
 permissions:
@@ -23,7 +23,7 @@ jobs:
   # carry the builds to a release job, because the organisation's artifact quota filled up and
   # stopped every release (2026-09-23).
   prepare:
-    if: startsWith(github.ref, 'refs/tags/openpak-v')
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: [self-hosted, linux, podman]
     steps:
       - env:
@@ -59,7 +59,7 @@ jobs:
           key: nuget-${{ runner.os }}-${{ hashFiles('**/global.json', '**/*.csproj', '**/Directory.Packages.props') }}
       - id: v
         run: |
-          case "$GITHUB_REF" in refs/tags/openpak-v*) echo "version=${GITHUB_REF_NAME#openpak-v}" >> "$GITHUB_OUTPUT" ;; *) echo "version=0.0.0" >> "$GITHUB_OUTPUT" ;; esac
+          case "$GITHUB_REF" in refs/tags/v*) echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT" ;; *) echo "version=0.0.0" >> "$GITHUB_OUTPUT" ;; esac
           echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
       - name: OpenPak compatibility list
         # From the website's catalogue; an unreachable API or a title without an id fails the build.
@@ -80,7 +80,7 @@ jobs:
           esac
           ls -l "$name".*
       - name: Attach to the release
-        if: startsWith(github.ref, 'refs/tags/openpak-v')
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$GITHUB_REF_NAME" ryujinx-openpak-* --repo "$GITHUB_REPOSITORY" --clobber
@@ -129,7 +129,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
       - id: v
         run: |
-          case "$GITHUB_REF" in refs/tags/openpak-v*) echo "version=${GITHUB_REF_NAME#openpak-v}" >> "$GITHUB_OUTPUT" ;; *) echo "version=0.0.0" >> "$GITHUB_OUTPUT" ;; esac
+          case "$GITHUB_REF" in refs/tags/v*) echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT" ;; *) echo "version=0.0.0" >> "$GITHUB_OUTPUT" ;; esac
           echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
       - name: OpenPak compatibility list
         # From the website's catalogue; an unreachable API or a title without an id fails the build.
@@ -145,7 +145,7 @@ jobs:
           mv "$f" "ryujinx-openpak-${{ steps.v.outputs.version }}-macos-universal.app.tar.gz"
           ls -l ryujinx-openpak-*
       - name: Attach to the release
-        if: startsWith(github.ref, 'refs/tags/openpak-v')
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$GITHUB_REF_NAME" ryujinx-openpak-* --repo "$GITHUB_REPOSITORY" --clobber

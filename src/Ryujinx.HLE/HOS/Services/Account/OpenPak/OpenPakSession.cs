@@ -186,6 +186,8 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             {
                 await GoOfflineAsync();
 
+                DropPush();
+
                 _device = null;
                 _idToken = null;
                 _idTokenExpiry = default;
@@ -402,6 +404,7 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             OpenPakBaas.Attach(_userId, SendBaasAsync);
 
             StartHeartbeat();
+            StartPush();
 
             // A console publishes its presence again whenever it reconnects, and syncs its lists
             // when the account becomes network-ready.
@@ -1179,6 +1182,7 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             try
             {
                 DeviceAccount.Delete(profileId);
+                PenneRegistration.DeleteEverywhere(profileId);
 
                 await OpenPakApi.Instance.ForgetProfileAsync(profileId, CancellationToken.None);
             }

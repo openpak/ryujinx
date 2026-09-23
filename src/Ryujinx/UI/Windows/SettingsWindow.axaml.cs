@@ -62,6 +62,15 @@ namespace Ryujinx.Ava.UI.Windows
             NavPanel.SelectedItem = NavPanel.MenuItems.ElementAt(0);
         }
 
+        /// <summary>Open on the page with this tag ("OpenPakPage"), for menus that point at one section.</summary>
+        public void SelectPage(string tag)
+        {
+            if (NavPanel.MenuItems.OfType<FANavigationViewItem>().FirstOrDefault(item => tag.Equals(item.Tag as string)) is { } item)
+            {
+                NavPanel.SelectedItem = item;
+            }
+        }
+
         private void NavPanelOnSelectionChanged(object sender, FANavigationViewSelectionChangedEventArgs e)
         {
             if (e.SelectedItem is FANavigationViewItem navItem && navItem.Tag is not null)

@@ -121,6 +121,8 @@ namespace Ryujinx.Ava.UI.Views.Dialog
                 // The first launch has no "cancel": the profile is set up one way or the other.
                 CloseButtonText = addAccount ? LocaleManager.Instance[LocaleKeys.Cancel] : string.Empty,
                 DefaultButton = FAContentDialogButton.Primary,
+                // With nowhere safe to keep a token, signing in cannot work; the body says why.
+                IsPrimaryButtonEnabled = SecretStore.Available,
             };
 
             HyperlinkButton create = new()
@@ -146,6 +148,16 @@ namespace Ryujinx.Ava.UI.Views.Dialog
                     create,
                 },
             };
+
+            if (!SecretStore.Available)
+            {
+                ((StackPanel)dialog.Content).Children.Insert(1, new TextBlock
+                {
+                    Text = LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SignInNoKeychain],
+                    TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                    Opacity = 0.8,
+                });
+            }
 
             FAContentDialogResult result = await ContentDialogHelper.ShowAsync(dialog);
 

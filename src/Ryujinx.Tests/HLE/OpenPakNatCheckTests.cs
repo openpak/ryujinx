@@ -167,6 +167,29 @@ namespace Ryujinx.Tests.HLE
             Assert.That(result.Type, Is.EqualTo('F'));
         }
 
+        [Test]
+        public async Task PingTimesARoundTripToThePrimary()
+        {
+            if (!OperatingSystem.IsLinux())
+            {
+                Assert.Ignore("127.0.0.2 is only a loopback address out of the box on Linux");
+            }
+
+            using Responder responder = new(_primary, _secondary, true, true);
+
+            long? ping = await OpenPakNatCheck.PingAsync(_primary, CancellationToken.None, responder.PortA);
+
+            Assert.That(ping, Is.Not.Null);
+            Assert.That(ping, Is.GreaterThanOrEqualTo(0).And.LessThan(1000));
+        }
+
+        [Test]
+        public async Task PingWithNoAnswerIsNull()
+        {
+            // Nothing listens here; three one-second tries, then no figure rather than a made-up one.
+            Assert.That(await OpenPakNatCheck.PingAsync(_primary, CancellationToken.None, 9), Is.Null);
+        }
+
         [TestCase(OpenPakNatCheck.Mapping.EndpointIndependent, OpenPakNatCheck.Filtering.AddressAndPortDependent, 'B')]
         [TestCase(OpenPakNatCheck.Mapping.AddressDependent, OpenPakNatCheck.Filtering.AddressDependent, 'C')]
         [TestCase(OpenPakNatCheck.Mapping.AddressAndPortDependent, OpenPakNatCheck.Filtering.AddressAndPortDependent, 'D')]

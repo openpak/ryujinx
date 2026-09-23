@@ -88,24 +88,38 @@ namespace Ryujinx.Ava.UI.Applet
         /// to ask. Not skipped by the setting that skips a title's own picker: this is the one
         /// place the profile is chosen. Null when closed, which keeps the last used profile.
         /// </summary>
-        public static async Task<(UserId Id, bool AddAccount)> ShowStartupDialog(ProfileSelectorDialogViewModel viewModel)
+        public static async Task<(UserId Id, bool AddAccount, bool Remember)> ShowStartupDialog(ProfileSelectorDialogViewModel viewModel)
         {
+            // "Remember my choice" makes the pick the startup setting, so the question stops.
+            CheckBox remember = new()
+            {
+                Content = LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_PickerRemember],
+                Margin = new Thickness(12, 8, 12, 0),
+            };
+
             FAContentDialog contentDialog = new()
             {
-                Title = LocaleManager.Instance[LocaleKeys.UserProfileWindowTitle],
+                Title = LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_PickerTitle],
                 PrimaryButtonText = LocaleManager.Instance[LocaleKeys.Continue],
                 SecondaryButtonText = LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_PickerAdd],
                 CloseButtonText = LocaleManager.Instance[LocaleKeys.Cancel],
                 DefaultButton = FAContentDialogButton.Primary,
-                Content = new ProfileSelectorDialog(viewModel),
+                Content = new StackPanel
+                {
+                    Children =
+                    {
+                        new ProfileSelectorDialog(viewModel),
+                        remember,
+                    },
+                },
                 Padding = new Thickness(0)
             };
 
             return await ContentDialogHelper.ShowAsync(contentDialog) switch
             {
-                FAContentDialogResult.Primary => (viewModel.SelectedUserId, false),
-                FAContentDialogResult.Secondary => (UserId.Null, true),
-                _ => (UserId.Null, false),
+                FAContentDialogResult.Primary => (viewModel.SelectedUserId, false, remember.IsChecked == true),
+                FAContentDialogResult.Secondary => (UserId.Null, true, false),
+                _ => (UserId.Null, false, false),
             };
         }
 

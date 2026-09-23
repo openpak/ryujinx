@@ -39,5 +39,7 @@
             Name="CreateButton"
             Padding="0"
             Content="{ext:Locale Dialog_OpenPak_SignInCreate}" />
+        <!-- While the request runs: the fields stay where they are, and this says something is. -->
+        <ProgressBar Name="BusyBar" IsIndeterminate="True" IsVisible="False" Height="4" />
     </StackPanel>
 </UserControl>

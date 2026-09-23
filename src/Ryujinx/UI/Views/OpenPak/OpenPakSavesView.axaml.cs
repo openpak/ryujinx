@@ -38,17 +38,28 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
 
         private OpenPakViewModel Model => DataContext as OpenPakViewModel;
 
+        private async void OnSignIn(object sender, RoutedEventArgs args) => await Windows.OpenPakWindow.SignInAsync();
+
+        /// <summary>Both sides have a save: the conflict dialog decides (UX spec §3.9).</summary>
+        private async void OnResolve(object sender, RoutedEventArgs args)
+        {
+            if (Model != null && (sender as Control)?.DataContext is OpenPakSaveModel row)
+            {
+                await Model.ResolveConflictAsync(row);
+            }
+        }
+
         /// <summary>Take the cloud copy: asked about, because it replaces the save being played.</summary>
         private async void OnDownload(object sender, RoutedEventArgs args)
         {
-            if (Model == null || (sender as Control)?.DataContext is not OpenPakSaveModel { Application: not null } row)
+            if (Model == null || (sender as Control)?.DataContext is not OpenPakSaveModel { CanDownload: true } row)
             {
                 return;
             }
 
             bool replace = await ContentDialogHelper.CreateChoiceDialog(
-                LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
-                LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_SavesOverwriteConfirm, row.TitleName),
+                LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SavesDownload],
+                LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_SavesOverwriteConfirm, row.TitleName),
                 string.Empty);
 
             if (replace)
@@ -67,7 +78,7 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
         }
 
         /// <summary>
-        /// Clear the title's cloud save. Asked about, and the question says how many versions go
+        /// Clear the title's cloud save. Asked about, and the question says every version goes
         /// and that the save on this machine is not one of them: the cloud copy is the only one
         /// of the two that nobody can get back.
         /// </summary>
@@ -79,9 +90,8 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
             }
 
             bool delete = await ContentDialogHelper.CreateChoiceDialog(
-                LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
-                LocaleManager.Instance.UpdateAndGetDynamicValue(
-                    LocaleKeys.Dialog_OpenPak_SavesDeleteConfirm, row.TitleName, row.VersionCount),
+                LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SavesDelete],
+                LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_SavesDeleteConfirm, row.TitleName),
                 string.Empty);
 
             if (delete)

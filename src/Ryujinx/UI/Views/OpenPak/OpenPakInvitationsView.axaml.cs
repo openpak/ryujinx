@@ -2,7 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Ryujinx.Ava.Common.Locale;
 using Ryujinx.Ava.Systems.AppLibrary;
-using Ryujinx.Ava.UI.Helpers;
+using Ryujinx.Ava.Systems.OpenPak;
 using Ryujinx.Ava.UI.ViewModels;
 using System;
 using System.Linq;
@@ -12,9 +12,9 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
     /// <summary>
     /// Invitations waiting for this account.
     ///
-    /// Accepting one launches the title and nothing more: the invitation itself is delivered to
-    /// the guest by the adapter, through the same channel a console receives it on, so there is
-    /// nothing for the emulator to hand over. This read never consumes one either — the endpoint
+    /// Joining one that is not for the running game launches the title and nothing more: the
+    /// invitation itself is delivered to the guest by the adapter, through the same channel a
+    /// console receives it on, so there is nothing for the emulator to hand over. This read never consumes one either — the endpoint
     /// is deliberately non-consuming, so looking at the list here cannot take an invitation away
     /// from the console that has to receive it.
     /// </summary>
@@ -35,10 +35,25 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
 
         private OpenPakViewModel Model => DataContext as OpenPakViewModel;
 
-        private async void OnPlay(object sender, RoutedEventArgs args)
+        private async void OnSignIn(object sender, RoutedEventArgs args) => await Windows.OpenPakWindow.SignInAsync();
+
+        /// <summary>
+        /// Join: handed to the game when it is the one running, otherwise the window closes and
+        /// the game starts (the invitation waits in its inbox for it).
+        /// </summary>
+        private async void OnJoin(object sender, RoutedEventArgs args)
         {
             if (Model == null || (sender as Control)?.DataContext is not OpenPakInvitationModel invitation)
             {
+                return;
+            }
+
+            if (OpenPakUi.IsRunning(invitation.TitleId))
+            {
+                (TopLevel.GetTopLevel(this) as Window)?.Close();
+
+                await RyujinxApp.MainWindow.JoinInvitationAsync(invitation.Invitation);
+
                 return;
             }
 
@@ -47,9 +62,7 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
 
             if (application == null)
             {
-                NotificationHelper.ShowWarning(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
-                    LocaleManager.Instance.UpdateAndGetDynamicValue(
-                        LocaleKeys.Dialog_OpenPak_InvitationsNotInstalled, invitation.TitleName));
+                Model.Message = LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_InvitationsNotInstalled, invitation.TitleName);
 
                 return;
             }
@@ -60,7 +73,7 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
             await RyujinxApp.MainWindow.ViewModel.LoadApplication(application);
         }
 
-        private async void OnDecline(object sender, RoutedEventArgs args)
+        private async void OnIgnore(object sender, RoutedEventArgs args)
         {
             if (Model != null && (sender as Control)?.DataContext is OpenPakInvitationModel invitation)
             {

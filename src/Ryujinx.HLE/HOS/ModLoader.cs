@@ -706,9 +706,6 @@ namespace Ryujinx.HLE.HOS
 
         internal bool ApplyNsoPatches(ulong applicationId, params ReadOnlySpan<IExecutable> programs)
         {
-            // OpenPak's built-in changes first, while the modules are still as shipped.
-            OpenPakCodePatches.Apply(applicationId, programs);
-
             IEnumerable<Mod<DirectoryInfo>> nsoMods = _patches.NsoPatches;
 
             if (_appMods.TryGetValue(applicationId, out ModCache mods))

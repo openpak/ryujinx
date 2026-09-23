@@ -161,6 +161,10 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             // A title starting or ending is a presence change of its own: the console publishes
             // ONLINE when an application registers and INACTIVE when none is running.
             TitleIDs.CurrentApplication.Event += (_, _) => _ = PublishPresenceAsync();
+
+            // After a block or unblock the console re-reads the request inbox too (§A.8): a
+            // pending request from someone now blocked is not one to show.
+            OpenPakBaas.BlockListChanged += () => _ = RefreshFriendRequestsAsync(CancellationToken.None);
         }
 
         /// <summary>

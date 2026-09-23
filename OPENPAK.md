@@ -43,9 +43,11 @@ Upstream is `upstream` (`git.ryujinx.app`); `origin` is `openpak/ryujinx`.
    zeros would be read as data; the favourites-only filter, because the core has no per-viewer
    favourite flag yet; and the newly-arrived request count, because nothing tracks what the
    console has already been shown.
-6. **NAT check** (`nncs1`/`nncs2`, UDP) and per-title patches, as titles need them.
-7. **Native News delivery.** `bcat:*` is not implemented, so the News page shows and saves the
-   dataset a title would receive rather than delivering it to the guest.
+6. ~~**NAT check**~~ **Done.** A game's own nncs probes reach nn-nncs through the redirect (nncs2
+   on its own address, from the profile's overrides), and Status runs the console's NAT type
+   test from this machine (see "Four gaps closed" below). Per-title patches as titles need them.
+7. ~~**Native News delivery.**~~ **Done for BCAT data:** a title's dataset is written into its
+   delivery cache at launch and read through `bcat:u`.
 
 ## Configuration surface
 
@@ -238,3 +240,25 @@ and the 0xC00 game-mode description), and a struct of zeros a title reads as dat
 an empty list. The inbox is asked with `read=false`, so a dismissal survives a restart without a
 local list.
 
+
+### Four gaps closed (2026-09-23)
+
+- **In-game block/unblock** (friend 30400–30403): POST/DELETE `/1.0.0/users/<me>/blocks` with the
+  module's body (reason, plus the route keys for the in-app variants); the cache takes the block at
+  once and blocks, friends and request boxes re-sync after it. 2031→2213, 2061→2701, and an
+  unblock the server does not know is 2121-2711.
+- **Push notifications:** the session registers a Penne id (kept per server and profile), takes a
+  login ticket and holds the frontline POST open, reading the length-prefixed frames. A delivered
+  `friend_request_*`, `friend_deleted`, `friend_invitation_received` or `presence_updated`
+  re-reads the list it concerns at once; a fresh connection catches up. Downlink only, as the
+  console's own frontline body is empty — presence stays on the REST PATCH, not DAPresence, which
+  would need the chunked uplink and the record sync. The 30 s poll stays as the fallback;
+  `OPENPAK_NO_PUSH=1` turns push off.
+- **BCAT delivery:** at launch, a title whose NACP asks for a delivery cache gets
+  `/api/emulator/v1/bcat/titles/<tid>` from the website written into its BCAT save
+  (`directories/<dir>/files/<file>`, `files.meta`, `directories.meta`, MD5 digests), sha256-checked,
+  whole or not at all, cached for offline launches within its window, and removed when the service
+  stops publishing it.
+- **NAT type:** nothing on a console but qlaunch's netdiag names a NAT type, and games run the
+  nncs exchange themselves through their sockets. Status runs the same test from the host's UDP
+  stack against nncs1/nncs2 and shows the letter with mapping and filtering.

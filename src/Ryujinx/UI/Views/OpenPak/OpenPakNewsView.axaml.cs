@@ -10,9 +10,9 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
     /// <summary>
     /// The BCAT news a title would receive, as the news service currently holds it.
     ///
-    /// This shows and saves the dataset; it does not deliver it. Delivery is a `bcat:*` service
-    /// the emulator does not implement yet, so what this offers honestly is a look at what is
-    /// there and a copy of it on disk, rather than a News channel that does not exist.
+    /// This shows and saves the dataset. Delivery happens on its own: a title whose NACP asks for
+    /// a delivery cache gets the same dataset written into it when it starts
+    /// (OpenPakBcatDelivery), and reads it through bcat:u like a console would.
     /// </summary>
     public partial class OpenPakNewsView : UserControl
     {

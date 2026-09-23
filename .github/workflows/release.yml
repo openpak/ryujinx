@@ -1,8 +1,8 @@
 name: release
 
 # The OpenPak build of Ryujinx. An openpak-v* tag publishes the four desktop targets
-# (Linux x64 and arm64, Windows x64, macOS universal) as workflow artifacts and attaches
-# them to a GitHub Release; a manual dispatch builds the artifacts alone. Plain pushes to
+# (Linux x64 and arm64, Windows x64, macOS universal) on a GitHub Release, each build attaching
+# its own files; a manual dispatch builds workflow artifacts alone. Plain pushes to
 # master do not build: the single self-hosted runner would spend most of an hour on every
 # commit and block every other repo's deploy behind it. Upstream's Forgejo workflows stay
 # untouched in .forgejo/ for merging; this one is ours.
@@ -19,8 +19,25 @@ env:
   DOTNET_NOLOGO: 1
 
 jobs:
+  # The release is made first and every build attaches its own files to it: artifacts no longer
+  # carry the builds to a release job, because the organisation's artifact quota filled up and
+  # stopped every release (2026-09-23).
+  prepare:
+    if: startsWith(github.ref, 'refs/tags/openpak-v')
+    runs-on: [self-hosted, linux, podman]
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag
+          --title "Ryujinx (OpenPak) $GITHUB_REF_NAME"
+          --notes "Upstream Ryujinx with the OpenPak network layer. Set OPENPAK_SERVER and drop the CA in the data directory; see OPENPAK.md."
+
   build:
     name: ${{ matrix.rid }}
+    needs: [prepare]
+    if: ${{ !cancelled() && needs.prepare.result != 'failure' }}
     runs-on: [self-hosted, linux, podman]
     timeout-minutes: 60
     strategy:
@@ -58,7 +75,14 @@ jobs:
             *)     chmod +x publish/Ryujinx* 2>/dev/null || true; tar -C publish -czf "$name.tar.gz" . ;;
           esac
           ls -l "$name".*
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/openpak-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" ryujinx-openpak-* --repo "$GITHUB_REPOSITORY" --clobber
       - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        continue-on-error: true
         with:
           name: ryujinx-openpak-${{ matrix.rid }}
           path: ryujinx-openpak-*
@@ -66,6 +90,8 @@ jobs:
           retention-days: 3
 
   macos:
+    needs: [prepare]
+    if: ${{ !cancelled() && needs.prepare.result != 'failure' }}
     # Upstream's own recipe: the universal .app is assembled on Linux with LLVM's lipo and
     # rcodesign, which costs a tenth of a macOS runner minute and needs no Apple identity
     # (the bundle is ad-hoc signed, as upstream's is).
@@ -110,25 +136,16 @@ jobs:
           f=$(ls publish/*.tar.gz | head -1)
           mv "$f" "ryujinx-openpak-${{ steps.v.outputs.version }}-macos-universal.app.tar.gz"
           ls -l ryujinx-openpak-*
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/openpak-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" ryujinx-openpak-* --repo "$GITHUB_REPOSITORY" --clobber
       - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        continue-on-error: true
         with:
           name: ryujinx-openpak-macos-universal
           path: ryujinx-openpak-*
           if-no-files-found: error
           retention-days: 3
-
-  release:
-    if: startsWith(github.ref, 'refs/tags/openpak-v')
-    needs: [build, macos]
-    runs-on: [self-hosted, linux, podman]
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ryujinx-openpak-*
-          merge-multiple: true
-      - env:
-          GH_TOKEN: ${{ github.token }}
-        run: >
-          gh release create "$GITHUB_REF_NAME" ryujinx-openpak-* --repo "$GITHUB_REPOSITORY"
-          --title "Ryujinx (OpenPak) $GITHUB_REF_NAME"
-          --notes "Upstream Ryujinx with the OpenPak network layer. Set OPENPAK_SERVER and drop the CA in the data directory; see OPENPAK.md."

@@ -42,6 +42,14 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
             }
         }
 
+        private void OnUninstall(object sender, RoutedEventArgs args)
+        {
+            if (DataContext is OpenPakViewModel model && (sender as Control)?.DataContext is OpenPakModModel mod)
+            {
+                model.UninstallMod(mod);
+            }
+        }
+
         private async void OnFavourite(object sender, RoutedEventArgs args)
         {
             if (DataContext is OpenPakViewModel model && (sender as Control)?.DataContext is OpenPakModModel mod)

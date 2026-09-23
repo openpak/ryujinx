@@ -178,6 +178,12 @@ namespace Ryujinx.Ava.Systems.Configuration
             OpenPak.StartupProfile.Value = cff.OpenPakStartupProfile ?? string.Empty;
             // Absent from every file written before it existed, which is the same as never answered.
             OpenPak.CrashReports.Value = cff.OpenPakCrashReports ?? OpenPakCrashReports.Ask;
+            // The same for these three: absent is the default the UX spec gives them.
+            OpenPak.CloudSync.Value = cff.OpenPakCloudSync ?? true;
+            OpenPak.ShowNotifications.Value = cff.OpenPakShowNotifications ?? true;
+            OpenPak.NotificationCorner.Value = string.IsNullOrEmpty(cff.OpenPakNotificationCorner)
+                ? OpenPakSection.CornerBottomRight
+                : cff.OpenPakNotificationCorner;
 
             Debug.EnableGdbStub.Value = shouldLoadFromFile ? cff.EnableGdbStub : Debug.EnableGdbStub.Value; // Get from global config only
             Debug.GdbStubPort.Value = shouldLoadFromFile ? cff.GdbStubPort : Debug.GdbStubPort.Value; // Get from global config only

@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 using Ryujinx.Ava.Common.Locale;
-using Ryujinx.Ava.UI.Helpers;
+using Ryujinx.Ava.Systems.OpenPak;
 using Ryujinx.Ava.UI.ViewModels;
 using Ryujinx.Ava.UI.Views.Dialog;
 using Ryujinx.Ava.UI.Windows;
@@ -10,8 +10,9 @@ using System.Threading;
 namespace Ryujinx.Ava.UI.Views.Settings
 {
     /// <summary>
-    /// Where OpenPak is configured. Signing in is the only thing a person has to do here; the
-    /// console address, the CA and the DNS redirect all come from the network profile at launch.
+    /// Where OpenPak is configured (UX spec §3.13). Signing in is the only thing a person has to
+    /// do here; the console address, the CA and the DNS redirect all come from the network
+    /// profile at launch.
     /// </summary>
     public partial class SettingsOpenPakView : UserControl
     {
@@ -26,16 +27,15 @@ namespace Ryujinx.Ava.UI.Views.Settings
                     model.ApplyOpenPakAddresses();
                 }
 
-                // One conditional request, best-effort: a new title on the server works after
-                // this without a new build, and a fetch that fails changes nothing.
+                RefreshNetworkButton.IsEnabled = false;
+
+                // One conditional request, best-effort and off the UI thread: a new title on the
+                // server works after this without a new build, and a fetch that fails changes nothing.
                 string source = await OpenPakNetworkProfileService.RefreshAsync(CancellationToken.None);
 
-                NotificationHelper.Show(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
-                    LocaleManager.Instance.UpdateAndGetDynamicValue(
-                        LocaleKeys.Dialog_OpenPak_SettingsNetworkRefreshed, source),
-                    source == "fetched"
-                        ? Avalonia.Controls.Notifications.NotificationType.Success
-                        : Avalonia.Controls.Notifications.NotificationType.Information);
+                NetworkStatus.Text = LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_SettingsNetworkRefreshed, source);
+
+                RefreshNetworkButton.IsEnabled = true;
 
                 Refresh();
             };
@@ -47,16 +47,15 @@ namespace Ryujinx.Ava.UI.Views.Settings
                     model.ApplyOpenPakAddresses();
                 }
 
-                await OpenPakSignInView.Show();
+                await OpenPakWindow.SignInAsync();
 
                 Refresh();
             };
 
+            // The same confirmation as the menu and the Account page.
             SignOutButton.Click += async (_, _) =>
             {
-                await OpenPakApi.Instance.SignOutAsync(CancellationToken.None);
-
-                OpenPakAccount.Instance.Stop();
+                await OpenPakSignOut.ConfirmAsync();
 
                 Refresh();
             };
@@ -79,13 +78,24 @@ namespace Ryujinx.Ava.UI.Views.Settings
         /// <summary>Say what is true right now, for the open profile: signed in or not.</summary>
         private void Refresh()
         {
-            AccountStatus.Text = $"{OpenPakConfig.ProfileName} — " + (OpenPakAccount.Instance.SignedIn
-                ? LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.MenuBar_OpenPak_SignedInAs,
-                    OpenPakAccount.Instance.DisplayName ?? OpenPakConfig.WebsiteUrl)
-                : LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SettingsNotSignedIn]);
+            bool signedIn = OpenPakApi.Instance.SignedIn;
+            bool running = OpenPakUi.GameRunning;
 
-            SignInButton.IsVisible = !OpenPakApi.Instance.SignedIn;
-            SignOutButton.IsVisible = OpenPakApi.Instance.SignedIn;
+            AccountStatus.Text = signedIn
+                ? LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_SettingsAccountRow, OpenPakConfig.ProfileName,
+                    OpenPakAccount.Instance.DisplayName ?? OpenPakConfig.WebsiteUrl)
+                : LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_SettingsAccountRowOut, OpenPakConfig.ProfileName);
+
+            SignInButton.IsVisible = !signedIn;
+            SignOutButton.IsVisible = signedIn;
+
+            // Sign-in, sign-out and the switch itself wait for the running game to stop (§5.5).
+            string stopFirst = running ? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_CommonStopGameFirst] : null;
+
+            SignInButton.IsEnabled = SignOutButton.IsEnabled = EnableBox.IsEnabled = !running;
+
+            ToolTip.SetTip(SignInButton, stopFirst);
+            ToolTip.SetTip(SignOutButton, stopFirst);
         }
     }
 }

@@ -183,17 +183,19 @@ namespace Ryujinx.OpenPak
 
                 if (response.StatusCode == HttpStatusCode.Unauthorized)
                 {
-                    return "Wrong email or password.";
+                    return OpenPakText.Credentials;
                 }
 
                 if (response.StatusCode == HttpStatusCode.TooManyRequests)
                 {
-                    return "Too many attempts. Wait a minute and try again.";
+                    return OpenPakText.RateLimited;
                 }
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    return $"OpenPak answered {(int)response.StatusCode}: {Trim(text)}";
+                    Logger.Warning?.Print(LogClass.Application, $"[OpenPak] Sign-in answered {(int)response.StatusCode}: {Trim(text)}");
+
+                    return OpenPakText.FromServer(Reason(text));
                 }
 
                 using JsonDocument document = JsonDocument.Parse(text);
@@ -209,12 +211,12 @@ namespace Ryujinx.OpenPak
                 {
                     await RevokeAsync(token, cancellationToken);
 
-                    return $"This OpenPak account is already linked to the profile \"{holder}\". Sign in there, or sign that profile out first.";
+                    return OpenPakText.ProfileTaken(holder);
                 }
 
                 if (!SecretStore.Store(StoreKey, token))
                 {
-                    return "Signed in, but the token could not be saved to the password store, so it was discarded.";
+                    return OpenPakText.KeychainSave;
                 }
 
                 _token = token;
@@ -233,7 +235,7 @@ namespace Ryujinx.OpenPak
             {
                 Logger.Warning?.Print(LogClass.Application, $"[OpenPak] Sign-in failed: {exception.Message}");
 
-                return $"Could not reach {BaseUrl}: {exception.Message}";
+                return OpenPakText.Unreachable(BaseUrl);
             }
         }
 
@@ -303,6 +305,64 @@ namespace Ryujinx.OpenPak
             using JsonDocument document = await GetAsync("/api/v1/me", cancellationToken);
 
             return document == null ? null : ReadProfile(document);
+        }
+
+        /// <summary>
+        /// Rename the account. The core validates the name and says why it refused one, which is
+        /// the useful thing to show. Null when it worked.
+        /// </summary>
+        public Task<string> SetDisplayNameAsync(string name, CancellationToken cancellationToken)
+            => PostAsync("/api/v1/me/profile", Json(writer => writer.WriteString("display_name", name)), cancellationToken);
+
+        /// <summary>
+        /// Replace the account's picture with a PNG or JPEG (up to 4 MiB; the site resizes it).
+        /// Null when it worked, otherwise why not.
+        /// </summary>
+        public async Task<string> SetAvatarAsync(byte[] image, string fileName, CancellationToken cancellationToken)
+        {
+            await _gate.WaitAsync(cancellationToken);
+
+            try
+            {
+                using HttpRequestMessage request = Authorised(HttpMethod.Post, BaseUrl + "/api/v1/me/avatar");
+
+                ByteArrayContent file = new(image);
+
+                file.Headers.ContentType = new MediaTypeHeaderValue(
+                    fileName.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg");
+
+                request.Content = new MultipartFormDataContent { { file, "avatar", Path.GetFileName(fileName) } };
+
+                using HttpResponseMessage response = await Client.SendAsync(request, cancellationToken);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+
+                string text = await response.Content.ReadAsStringAsync(cancellationToken);
+
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    await ForgetAsync();
+
+                    return OpenPakText.SignInExpired;
+                }
+
+                Logger.Warning?.Print(LogClass.Application, $"[OpenPak] Avatar upload answered {(int)response.StatusCode}: {Trim(text)}");
+
+                return response.StatusCode == HttpStatusCode.BadRequest ? OpenPakText.Image : OpenPakText.FromServer(Reason(text));
+            }
+            catch (Exception exception)
+            {
+                Logger.Warning?.Print(LogClass.Application, $"[OpenPak] Avatar upload failed: {exception.Message}");
+
+                return OpenPakText.Unreachable(BaseUrl);
+            }
+            finally
+            {
+                _gate.Release();
+            }
         }
 
         /// <summary>/me with a token that is not kept yet, to learn whose it is before keeping it.</summary>
@@ -709,13 +769,20 @@ namespace Ryujinx.OpenPak
                     return (null, ((long)Number(created.RootElement, "number")).ToString());
                 }
 
-                return (response.StatusCode == HttpStatusCode.InsufficientStorage
-                    ? "The OpenPak allowance is full. Connect your own storage at openpak.org/account/saves."
-                    : $"OpenPak answered {(int)response.StatusCode}: {Trim(text)}", null);
+                if (response.StatusCode == HttpStatusCode.InsufficientStorage)
+                {
+                    return (OpenPakText.SavesFull(BaseUrl), null);
+                }
+
+                Logger.Warning?.Print(LogClass.Application, $"[OpenPak] Save upload answered {(int)response.StatusCode}: {Trim(text)}");
+
+                return (OpenPakText.FromServer(Reason(text)), null);
             }
             catch (Exception exception)
             {
-                return (exception.Message, null);
+                Logger.Warning?.Print(LogClass.Application, $"[OpenPak] Save upload failed: {exception.Message}");
+
+                return (OpenPakText.Unreachable(BaseUrl), null);
             }
         }
 
@@ -1074,16 +1141,20 @@ namespace Ryujinx.OpenPak
                 {
                     await ForgetAsync();
 
-                    return "That sign-in is no longer valid. Sign in again.";
+                    return OpenPakText.SignInExpired;
                 }
 
                 // The body carries the reason the core gave; a bare status code says nothing
                 // useful about a conflicting relationship or an unknown friend code.
-                return Reason(text) ?? $"OpenPak answered {(int)response.StatusCode}.";
+                Logger.Warning?.Print(LogClass.Application, $"[OpenPak] {path} answered {(int)response.StatusCode}: {Trim(text)}");
+
+                return OpenPakText.FromServer(Reason(text));
             }
             catch (Exception exception)
             {
-                return exception.Message;
+                Logger.Warning?.Print(LogClass.Application, $"[OpenPak] {path} failed: {exception.Message}");
+
+                return OpenPakText.Unreachable(BaseUrl);
             }
             finally
             {
@@ -1113,14 +1184,18 @@ namespace Ryujinx.OpenPak
                 {
                     await ForgetAsync();
 
-                    return "That sign-in is no longer valid. Sign in again.";
+                    return OpenPakText.SignInExpired;
                 }
 
-                return Reason(text) ?? $"OpenPak answered {(int)response.StatusCode}.";
+                Logger.Warning?.Print(LogClass.Application, $"[OpenPak] {path} answered {(int)response.StatusCode}: {Trim(text)}");
+
+                return OpenPakText.FromServer(Reason(text));
             }
             catch (Exception exception)
             {
-                return exception.Message;
+                Logger.Warning?.Print(LogClass.Application, $"[OpenPak] {path} failed: {exception.Message}");
+
+                return OpenPakText.Unreachable(BaseUrl);
             }
             finally
             {

@@ -107,6 +107,34 @@ namespace Ryujinx.Ava.Systems.OpenPak
             }
         }
 
+        /// <summary>Remove the mod's directory: the same folder Manage Mods would delete.</summary>
+        public static bool Uninstall(string titleId, OpenPakMod mod, out string failure)
+        {
+            failure = null;
+
+            try
+            {
+                string directory = DirectoryFor(titleId, mod);
+
+                if (Directory.Exists(directory))
+                {
+                    Directory.Delete(directory, recursive: true);
+                }
+
+                Logger.Info?.Print(LogClass.Application, $"[OpenPak] Uninstalled {mod.Name} for {titleId}");
+
+                return true;
+            }
+            catch (Exception exception)
+            {
+                Logger.Warning?.Print(LogClass.Application, $"[OpenPak] Could not uninstall {mod.Name}: {exception.Message}");
+
+                failure = OpenPakText.Failed;
+
+                return false;
+            }
+        }
+
         /// <summary>A slug is already tame, but it is still going on somebody's filesystem.</summary>
         private static string Sanitise(string name)
         {

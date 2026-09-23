@@ -29,6 +29,14 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
                 }
             };
 
+            TestButton.Click += async (_, _) =>
+            {
+                if (DataContext is OpenPakViewModel model)
+                {
+                    await model.TestConnectionAsync();
+                }
+            };
+
             // Only while this page is the one on screen: the window keeps every page alive, and
             // six of them polling behind the one being looked at is six pointless requests.
             _timer.Tick += async (_, _) =>

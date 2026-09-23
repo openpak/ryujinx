@@ -171,7 +171,7 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             handler.SslOptions.RemoteCertificateValidationCallback = (_, certificate, _, errors) => Validate(certificate, errors);
             handler.SslOptions.ClientCertificates = [ClientCertificate()];
 
-            return new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(20) };
+            return Ryujinx.OpenPak.OpenPakClientHeader.Apply(new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(20) });
         }
 
         /// <summary>

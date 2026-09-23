@@ -1,15 +1,21 @@
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Threading;
 using FluentAvalonia.UI.Controls;
 using Ryujinx.Ava.Common.Locale;
 using Ryujinx.Ava.Systems.AppLibrary;
 using Ryujinx.Ava.UI.ViewModels;
+using Ryujinx.Ava.UI.Views.Dialog;
+using Ryujinx.OpenPak;
+using System;
+using System.Collections.Specialized;
 using System.Linq;
 using System.Threading.Tasks;
 
 namespace Ryujinx.Ava.UI.Windows
 {
     /// <summary>
-    /// Everything OpenPak, in one window with the pages down the side.
+    /// Everything OpenPak, in one window with the pages down the side (UX spec §3.6).
     ///
     /// One window rather than seven dialogs because it is one account: the friends list and the
     /// invitations and the saves are the same person's, and a menu that opened seven separate
@@ -31,6 +37,10 @@ namespace Ryujinx.Ava.UI.Windows
         }
 
         private OpenPakViewModel _viewModel;
+
+        // Friends and invitations move on their own; while the window is open it keeps up with
+        // them every thirty seconds, as every OpenPak emulator's window does.
+        private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromSeconds(30) };
 
         public OpenPakWindow() : base(true)
         {
@@ -57,7 +67,32 @@ namespace Ryujinx.Ava.UI.Windows
 
             NavPanel.SelectionChanged += OnPageChanged;
 
-            Closed += (_, _) => _viewModel.Dispose();
+            _viewModel.Requests.CollectionChanged += OnRequestsChanged;
+
+            OpenPakApi.Instance.SignedInChanged += OnSignedInChanged;
+
+            _poll.Tick += async (_, _) =>
+            {
+                if (_viewModel.SignedIn)
+                {
+                    await _viewModel.RefreshAsync();
+                }
+            };
+
+            // Ctrl+PgUp / Ctrl+PgDn walk the pages, the keyboard's L and R.
+            AddHandler(KeyDownEvent, OnKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+
+            Opened += (_, _) => _poll.Start();
+
+            Closed += (_, _) =>
+            {
+                _poll.Stop();
+
+                OpenPakApi.Instance.SignedInChanged -= OnSignedInChanged;
+                _viewModel.Requests.CollectionChanged -= OnRequestsChanged;
+
+                _viewModel.Dispose();
+            };
         }
 
         /// <summary>
@@ -85,6 +120,22 @@ namespace Ryujinx.Ava.UI.Windows
             await ShowAsync(window);
         }
 
+        /// <summary>
+        /// The <c>Sign in...</c> every signed-out page offers: the setup dialog for a profile that
+        /// never had an account, the sign-in dialog otherwise. The window reloads itself on success.
+        /// </summary>
+        public static async Task SignInAsync()
+        {
+            if (OpenPakLinks.Get(OpenPakConfig.ProfileId) == null && RyujinxApp.MainWindow?.AccountManager is { } accounts)
+            {
+                await OpenPakSetup.RunAsync(accounts, addAccount: false);
+            }
+            else
+            {
+                await OpenPakSignInView.Show();
+            }
+        }
+
         /// <summary>Fetch everything <paramref name="page"/> displays, once, on demand.</summary>
         private Task RefreshPage(Page page) => page switch
         {
@@ -96,6 +147,40 @@ namespace Ryujinx.Ava.UI.Windows
             Page.Status => _viewModel.RefreshStatusAsync(),
             _ => Task.CompletedTask,
         };
+
+        private Page CurrentPage
+            => NavPanel.SelectedItem is FANavigationViewItem { Tag: string tag } && PageFromTag(tag) is { } page ? page : Page.Account;
+
+        /// <summary>Signing in or out changes what every page shows, so all of them load again.</summary>
+        private void OnSignedInChanged() => Dispatcher.UIThread.Post(async () =>
+        {
+            _viewModel.Forget();
+
+            await RefreshPage(CurrentPage);
+        });
+
+        private void OnRequestsChanged(object sender, NotifyCollectionChangedEventArgs args)
+        {
+            int incoming = _viewModel.Requests.Count(request => request.Incoming);
+
+            RequestsBadge.IsVisible = incoming > 0;
+            RequestsBadgeText.Text = incoming > 99 ? "99+" : incoming.ToString();
+        }
+
+        private void OnKeyDown(object sender, KeyEventArgs args)
+        {
+            if (!args.KeyModifiers.HasFlag(KeyModifiers.Control) || args.Key is not (Key.PageUp or Key.PageDown))
+            {
+                return;
+            }
+
+            int count = Enum.GetValues<Page>().Length;
+            int next = ((int)CurrentPage + (args.Key == Key.PageDown ? 1 : count - 1)) % count;
+
+            Select((Page)next);
+
+            args.Handled = true;
+        }
 
         private void Select(Page page)
         {

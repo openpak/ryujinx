@@ -30,7 +30,12 @@ namespace Ryujinx.Ava.UI.Views.Dialog
 
             // The profile is in the name: each profile is its own sign-in, and the account's device
             // list should say which one a token belongs to before anyone revokes it.
-            DeviceBox.Text = $"Ryujinx — {OpenPakConfig.ProfileName} on {Environment.MachineName}";
+            DeviceBox.Text = LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_SignInDeviceDefault,
+                "Ryujinx", OpenPakConfig.ProfileName, Environment.MachineName);
+
+            // Nothing to send until both are there (UX spec §3.3).
+            EmailBox.TextChanged += (_, _) => UpdateSubmit();
+            PasswordBox.TextChanged += (_, _) => UpdateSubmit();
 
             PasswordBox.KeyDown += async (_, e) =>
             {
@@ -88,7 +93,20 @@ namespace Ryujinx.Ava.UI.Views.Dialog
                 view.IntroText.IsVisible = true;
             }
 
-            dialog.Opened += (_, _) => view.EmailBox.Focus();
+            view.UpdateSubmit();
+
+            // Straight to the password when the email is already there.
+            dialog.Opened += (_, _) =>
+            {
+                if (string.IsNullOrEmpty(view.EmailBox.Text))
+                {
+                    view.EmailBox.Focus();
+                }
+                else
+                {
+                    view.PasswordBox.Focus();
+                }
+            };
 
             await ContentDialogHelper.ShowAsync(dialog);
 
@@ -99,12 +117,15 @@ namespace Ryujinx.Ava.UI.Views.Dialog
         {
             // Enter in the password box and the dialog's own default-button handling can both
             // land here for one key press; the disabled button is what says one is in flight.
-            if (!_dialog.IsPrimaryButtonEnabled)
+            if (_busy || !CanSubmit)
             {
                 return;
             }
 
-            _dialog.IsPrimaryButtonEnabled = false;
+            _busy = true;
+            BusyBar.IsVisible = true;
+
+            UpdateSubmit();
 
             Status(string.Empty);
 
@@ -116,7 +137,10 @@ namespace Ryujinx.Ava.UI.Views.Dialog
 
             if (failure != null)
             {
-                _dialog.IsPrimaryButtonEnabled = true;
+                _busy = false;
+                BusyBar.IsVisible = false;
+
+                UpdateSubmit();
 
                 Status(failure);
 
@@ -129,20 +153,38 @@ namespace Ryujinx.Ava.UI.Views.Dialog
 
             // Binding the console follows from the sign-in: the website mints the token the
             // console's link page would have produced, so nothing is typed twice. A failure here
-            // leaves the account page's link screen as the fallback.
+            // shows on the Account page as a console link that did not happen, with Try again.
             bool linked = await Ryujinx.HLE.HOS.Services.Account.OpenPak.OpenPakSession.Instance.LinkFromAccountAsync(
                 CancellationToken.None);
 
-            string email = EmailBox.Text ?? string.Empty;
+            // The account's own name, as the menu will show it; the email only when the site
+            // did not say.
+            string name = OpenPakLinks.Get(OpenPakConfig.ProfileId)?.DisplayName is { Length: > 0 } displayName
+                ? displayName
+                : EmailBox.Text ?? string.Empty;
 
             _signedIn = true;
 
-            NotificationHelper.ShowSuccess(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
-                LocaleManager.Instance.UpdateAndGetDynamicValue(
-                    linked ? LocaleKeys.Dialog_OpenPak_SignInDoneLinked : LocaleKeys.Dialog_OpenPak_SignInDone,
-                    email));
+            OpenPakToast.Show(OpenPakToast.Category.OpenPak,
+                LocaleManager.GetFormatted(
+                    linked ? LocaleKeys.Dialog_OpenPak_SignInDoneLinked : LocaleKeys.Dialog_OpenPak_SignInDone, name),
+                () => _ = Windows.OpenPakWindow.Show(Windows.OpenPakWindow.Page.Account),
+                Avalonia.Controls.Notifications.NotificationType.Success);
 
             _dialog?.Hide();
+        }
+
+        private bool _busy;
+
+        private bool CanSubmit => SecretStore.Available &&
+            !string.IsNullOrWhiteSpace(EmailBox.Text) && !string.IsNullOrEmpty(PasswordBox.Text);
+
+        private void UpdateSubmit()
+        {
+            if (_dialog != null)
+            {
+                _dialog.IsPrimaryButtonEnabled = !_busy && CanSubmit;
+            }
         }
 
         private void Status(string message)

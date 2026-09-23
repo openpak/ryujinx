@@ -29,6 +29,7 @@ using System.Threading.Tasks;
 using OpenPakAccount = Ryujinx.OpenPak.OpenPakAccount;
 using OpenPakApi = Ryujinx.OpenPak.OpenPakApi;
 using OpenPakConfig = Ryujinx.OpenPak.OpenPakConfig;
+using OpenPakLinks = Ryujinx.OpenPak.OpenPakLinks;
 
 namespace Ryujinx.Ava.UI.Views.Main
 {
@@ -56,10 +57,26 @@ namespace Ryujinx.Ava.UI.Views.Main
 
             OpenPakAccountMenuItem.Command = Commands.Create(async () =>
             {
-                // Signed out, the only thing the account page offers is the sign-in button.
+                // OpenPak turned off: the way back is the setting that turns it on.
+                if (!OpenPakConfig.Enabled)
+                {
+                    await OpenSettingsAt(OpenPakSettingsPage);
+
+                    return;
+                }
+
                 if (!OpenPakApi.Instance.SignedIn)
                 {
-                    await Views.Dialog.OpenPakSignInView.Show();
+                    // A profile that never had an account gets the setup dialog; one whose
+                    // sign-in lapsed only needs to sign in again.
+                    if (OpenPakLinks.Get(OpenPakConfig.ProfileId) == null && Window?.AccountManager != null)
+                    {
+                        await OpenPakSetup.RunAsync(Window.AccountManager, addAccount: false);
+                    }
+                    else
+                    {
+                        await OpenPakSignInView.Show();
+                    }
 
                     RefreshOpenPakStatus();
 
@@ -74,8 +91,13 @@ namespace Ryujinx.Ava.UI.Views.Main
             OpenPakModsMenuItem.Command = Commands.Create(() => OpenPakWindow.Show(OpenPakWindow.Page.Mods));
             OpenPakNewsMenuItem.Command = Commands.Create(() => OpenPakWindow.Show(OpenPakWindow.Page.News));
             OpenPakStatusMenuItem.Command = Commands.Create(() => OpenPakWindow.Show(OpenPakWindow.Page.Status));
-            OpenPakSettingsMenuItem.Command = Commands.Create(OpenSettings);
-            OpenPakSignOutMenuItem.Command = Commands.Create(OpenPakSignOut);
+            OpenPakSettingsMenuItem.Command = Commands.Create(() => OpenSettingsAt(OpenPakSettingsPage));
+            OpenPakSignOutMenuItem.Command = Commands.Create(async () =>
+            {
+                await OpenPakSignOut.ConfirmAsync();
+
+                RefreshOpenPakStatus();
+            });
             OpenPakWebsiteMenuItem.Command = Commands.Create(() => OpenHelper.OpenUrl(OpenPakConfig.WebsiteUrl));
             OpenPakMenuItem.SubmenuOpened += (_, _) => RefreshOpenPakStatus();
 
@@ -148,13 +170,29 @@ namespace Ryujinx.Ava.UI.Views.Main
             }
         }
 
-        public async Task OpenSettings()
+        /// <summary>The settings tab OpenPak's own menu opens (UX spec §3.1, item 8).</summary>
+        private const string OpenPakSettingsPage = "OpenPakPage";
+
+        public Task OpenSettings() => OpenSettingsAt(null);
+
+        /// <summary>The settings window, opened at the page with this tag when one is given.</summary>
+        public async Task OpenSettingsAt(string page)
         {
             Window.SettingsWindow = new(Window.VirtualFileSystem, Window.ContentManager);
 
+            if (page != null)
+            {
+                Window.SettingsWindow.SelectPage(page);
+            }
+
             Rainbow.Enable();
 
-            if (ViewModel.SelectedApplication is null) // Checks if game data exists
+            // A page asked for by name lives in the global settings, not a game's own.
+            if (page != null)
+            {
+                await Window.SettingsWindow.ShowDialog(Window);
+            }
+            else if (ViewModel.SelectedApplication is null) // Checks if game data exists
             {
                 await StyleableAppWindow.ShowAsync(Window.SettingsWindow);
             }
@@ -243,19 +281,34 @@ namespace Ryujinx.Ava.UI.Views.Main
         /// </summary>
         private void RefreshOpenPakStatus()
         {
-            bool signedIn = OpenPakApi.Instance.SignedIn;
+            bool enabled = OpenPakConfig.Enabled;
+            bool signedIn = enabled && OpenPakApi.Instance.SignedIn;
+            bool running = ViewModel?.IsGameRunning ?? false;
 
             OpenPakAccountMenuItem.Header = signedIn
-                ? LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.MenuBar_OpenPak_SignedInAs,
+                ? LocaleManager.GetFormatted(LocaleKeys.MenuBar_OpenPak_SignedInAs,
                     OpenPakAccount.Instance.DisplayName ?? OpenPakConfig.WebsiteUrl)
                 : LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_SignInPrompt];
 
-            // The pages that are about this account are pointless without one; status is public
-            // and stays reachable, which is the point of it being public.
+            // Signing in switches the profile's identity under a running game, so it waits for
+            // the game to stop; with OpenPak off the header only leads to the setting, which is
+            // always fine.
+            bool headerBlocked = enabled && !signedIn && running;
+
+            OpenPakAccountMenuItem.IsEnabled = !headerBlocked;
+            ToolTip.SetTip(OpenPakAccountMenuItem, headerBlocked
+                ? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_CommonStopGameFirst]
+                : null);
+
+            // The pages that are about this account are pointless without one; mods, news and
+            // status are public and stay reachable, which is the point of them being public.
             OpenPakFriendsMenuItem.IsEnabled = signedIn;
             OpenPakInvitationsMenuItem.IsEnabled = signedIn;
             OpenPakSavesMenuItem.IsEnabled = signedIn;
-            OpenPakSignOutMenuItem.IsEnabled = signedIn;
+            OpenPakSignOutMenuItem.IsEnabled = signedIn && !running;
+            ToolTip.SetTip(OpenPakSignOutMenuItem, signedIn && running
+                ? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_CommonStopGameFirst]
+                : null);
 
             if (signedIn)
             {
@@ -293,18 +346,6 @@ namespace Ryujinx.Ava.UI.Views.Main
                     },
                 };
             });
-        }
-
-        private async Task OpenPakSignOut()
-        {
-            await OpenPakApi.Instance.SignOutAsync(CancellationToken.None);
-
-            OpenPakAccount.Instance.Stop();
-
-            NotificationHelper.ShowInformation(LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_Label],
-                LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SignOutDone]);
-
-            RefreshOpenPakStatus();
         }
     }
 }

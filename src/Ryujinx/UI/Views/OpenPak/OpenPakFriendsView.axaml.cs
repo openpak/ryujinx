@@ -26,6 +26,17 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
                 }
             };
 
+            // Enter adds, as the button does.
+            FriendCodeBox.KeyDown += async (_, e) =>
+            {
+                if (e.Key == Key.Enter && DataContext is OpenPakViewModel { Ready: true } model)
+                {
+                    e.Handled = true;
+
+                    await model.AddFriendAsync();
+                }
+            };
+
             RefreshButton.Click += async (_, _) =>
             {
                 if (DataContext is OpenPakViewModel model)
@@ -36,6 +47,8 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
         }
 
         private OpenPakViewModel Model => DataContext as OpenPakViewModel;
+
+        private async void OnSignIn(object sender, RoutedEventArgs args) => await Windows.OpenPakWindow.SignInAsync();
 
         /// <summary>A click on the row opens its detail panel in place; a second click closes it again.</summary>
         private void OnToggleExpand(object sender, TappedEventArgs args)
@@ -73,7 +86,8 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
                 return;
             }
 
-            if (await Confirm(LocaleKeys.Dialog_OpenPak_FriendsRemoveConfirm, friend.DisplayName))
+            if (await Confirm(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_FriendsRemoveTitle],
+                LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_FriendsRemoveConfirm, friend.DisplayName)))
             {
                 await Model.RemoveFriendAsync(friend);
             }
@@ -86,16 +100,15 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
                 return;
             }
 
-            if (await Confirm(LocaleKeys.Dialog_OpenPak_FriendsBlockConfirm, friend.DisplayName))
+            if (await Confirm(LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_FriendsBlockTitle, friend.DisplayName),
+                LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_FriendsBlockConfirm]))
             {
                 await Model.BlockFriendAsync(friend);
             }
         }
 
-        private static async Task<bool> Confirm(LocaleKeys question, string name)
-            => await ContentDialogHelper.CreateChoiceDialog(
-                LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
-                LocaleManager.Instance.UpdateAndGetDynamicValue(question, name),
-                string.Empty);
+        /// <summary>The spec's confirmation for a destructive row action: its own title, then the question.</summary>
+        private static async Task<bool> Confirm(string title, string question)
+            => await ContentDialogHelper.CreateChoiceDialog(title, question, string.Empty);
     }
 }

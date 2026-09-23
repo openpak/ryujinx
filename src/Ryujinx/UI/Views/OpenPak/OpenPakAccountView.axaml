@@ -34,58 +34,92 @@
             </StackPanel>
 
             <StackPanel IsVisible="{Binding SignedIn}" Spacing="12">
+                <!-- The identity card: who this is, how friends find them, and the way out. -->
                 <Border Classes="settings card">
                     <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
-                        <Border
+                        <!-- The picture is its own way to change it: a click, or its context menu. -->
+                        <Button
                             Grid.Column="0"
-                            Width="56"
-                            Height="56"
-                            CornerRadius="28"
-                            ClipToBounds="True"
-                            Background="{DynamicResource ThemeControlBorderColor}">
-                            <Image Source="{Binding Avatar}" Stretch="UniformToFill" />
-                        </Border>
-                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
-                            <TextBlock Text="{Binding DisplayName}" FontSize="18" FontWeight="SemiBold" />
-                            <TextBlock Classes="sub" Text="{Binding ServerAddress}" />
+                            Name="AvatarButton"
+                            Padding="0"
+                            MinWidth="0"
+                            MinHeight="0"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            VerticalAlignment="Top"
+                            ToolTip.Tip="{ext:Locale Dialog_OpenPak_AccountChangePicture}"
+                            IsEnabled="{Binding Ready}">
+                            <Button.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Click="OnChangePicture" Header="{ext:Locale Dialog_OpenPak_AccountChangePicture}" />
+                                </ContextMenu>
+                            </Button.ContextMenu>
+                            <Border
+                                Width="56"
+                                Height="56"
+                                CornerRadius="28"
+                                ClipToBounds="True"
+                                Background="{DynamicResource ThemeControlBorderColor}">
+                                <Image Source="{Binding Avatar}" Stretch="UniformToFill" />
+                            </Border>
+                        </Button>
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="6">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <TextBlock Text="{Binding DisplayName}" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap" />
+                                <HyperlinkButton
+                                    Name="ChangeNameButton"
+                                    Padding="0"
+                                    VerticalAlignment="Center"
+                                    IsEnabled="{Binding Ready}"
+                                    Content="{ext:Locale Dialog_OpenPak_AccountChangeName}" />
+                            </StackPanel>
+                            <!-- The friend code as a pill somebody can select or copy. -->
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Border
+                                    CornerRadius="12"
+                                    Padding="10,3"
+                                    Background="{DynamicResource ThemeControlBorderColor}">
+                                    <SelectableTextBlock Text="{Binding FriendCode}" FontFamily="{StaticResource JetBrainsMono}" TextWrapping="Wrap" />
+                                </Border>
+                                <Button Name="CopyCodeButton" Content="{ext:Locale Dialog_OpenPak_AccountCopy}" MinWidth="70" />
+                            </StackPanel>
                         </StackPanel>
-                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                            <Button Name="SignOutButton" Content="{ext:Locale Dialog_OpenPak_SettingsSignOut}" IsEnabled="{Binding Ready}" MinWidth="90" />
-                        </StackPanel>
+                        <Button
+                            Grid.Column="2"
+                            Name="SignOutButton"
+                            VerticalAlignment="Top"
+                            Content="{ext:Locale Dialog_OpenPak_SettingsSignOut}"
+                            IsEnabled="{Binding CanSignOut}"
+                            ToolTip.Tip="{Binding SignOutTip}"
+                            MinWidth="90" />
                     </Grid>
                 </Border>
 
+                <!-- Details, as label and value. -->
                 <Border Classes="settings card">
                     <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="12">
                         <TextBlock Grid.Row="0" Grid.Column="0" Classes="sub" Text="{ext:Locale Dialog_OpenPak_AccountFriendCode}" VerticalAlignment="Center" />
-                        <SelectableTextBlock Grid.Row="0" Grid.Column="1" Text="{Binding FriendCode}" VerticalAlignment="Center" FontFamily="{StaticResource JetBrainsMono}" />
-                        <Button Grid.Row="0" Grid.Column="2" Name="CopyCodeButton" Content="{ext:Locale Dialog_OpenPak_AccountCopy}" MinWidth="80" />
+                        <SelectableTextBlock Grid.Row="0" Grid.Column="1" Text="{Binding FriendCode}" VerticalAlignment="Center" FontFamily="{StaticResource JetBrainsMono}" TextWrapping="Wrap" />
 
-                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="sub" Text="{ext:Locale Dialog_OpenPak_AccountSwitchIdentity}" VerticalAlignment="Center" />
-                        <SelectableTextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SwitchPid}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="sub" Text="{Binding IdentityLabel}" VerticalAlignment="Center" />
+                        <SelectableTextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SwitchPid}" VerticalAlignment="Center" TextWrapping="Wrap" />
 
                         <TextBlock Grid.Row="2" Grid.Column="0" Classes="sub" Text="{ext:Locale Dialog_OpenPak_AccountConsoles}" VerticalAlignment="Center" />
                         <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding LinkedConsoles}" VerticalAlignment="Center" TextWrapping="Wrap" />
 
-                        <TextBlock Grid.Row="3" Grid.Column="0" Classes="sub" Text="{ext:Locale Dialog_OpenPak_StatusPlayers}" VerticalAlignment="Center" />
-                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding PlayersOnline}" VerticalAlignment="Center" />
-                    </Grid>
-                </Border>
-
-                <!-- Signing in is a person's account; linking is the emulated console's identity
-                     inside it. A title asking acc:u0 for an id_token needs the second, so it is
-                     offered here, next to the first, and hidden once it is done. -->
-                <Border Name="ConsolePanel" Classes="settings card" IsVisible="False">
-                    <StackPanel Spacing="8">
-                        <TextBlock Classes="h1" Text="{ext:Locale MenuBar_OpenPak_LinkTitle}" />
-                        <TextBlock Name="ConsoleStatus" Classes="sub" TextWrapping="Wrap" />
+                        <!-- Linking is automatic on sign-in; when it did not happen, one button
+                             tries again. There is no second way to link. -->
+                        <TextBlock Grid.Row="3" Grid.Column="0" Classes="sub" Text="{ext:Locale Dialog_OpenPak_AccountLink}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding ConsoleLink}" VerticalAlignment="Center" TextWrapping="Wrap" />
                         <Button
-                            Name="LinkConsoleButton"
-                            Classes="accent"
-                            Content="{ext:Locale MenuBar_OpenPak_LinkAccount}"
-                            HorizontalAlignment="Left"
-                            MinWidth="200" />
-                    </StackPanel>
+                            Grid.Row="3"
+                            Grid.Column="2"
+                            Name="TryAgainButton"
+                            Content="{ext:Locale Dialog_OpenPak_AccountTryAgain}"
+                            IsVisible="{Binding LinkFailed}"
+                            IsEnabled="{Binding Ready}"
+                            MinWidth="90" />
+                    </Grid>
                 </Border>
             </StackPanel>
         </StackPanel>

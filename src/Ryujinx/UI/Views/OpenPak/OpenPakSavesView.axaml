@@ -23,7 +23,7 @@
         <!-- Upload and download are about the title you pick, not about the row you clicked:
              the cloud may hold a save for a title, and the console may hold one, and they are
              two different questions. -->
-        <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="10" Margin="0,0,0,12">
+        <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="10" Margin="0,0,0,12" IsVisible="{Binding SignedIn}">
             <ComboBox
                 Grid.Column="0"
                 Name="TitleBox"
@@ -43,7 +43,11 @@
         <StackPanel Grid.Row="2" Margin="0,0,0,12">
             <TextBlock Classes="sub" Text="{Binding UsageText}" IsVisible="{Binding SignedIn}" />
             <TextBlock Classes="sub" Text="{ext:Locale Dialog_OpenPak_SavesEmpty}" IsVisible="{Binding SavesEmpty}" />
-            <TextBlock Classes="sub" Text="{ext:Locale Dialog_OpenPak_NeedSignIn}" IsVisible="{Binding SignedOut}" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="3" IsVisible="{Binding SignedOut}" Spacing="12" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,40,0,0">
+            <TextBlock Text="{ext:Locale Dialog_OpenPak_NeedSignIn}" TextWrapping="Wrap" HorizontalAlignment="Center" />
+            <Button Classes="accent" Click="OnSignIn" Content="{ext:Locale Dialog_OpenPak_SignIn}" HorizontalAlignment="Center" MinWidth="160" />
         </StackPanel>
 
         <ScrollViewer Grid.Row="3" HorizontalScrollBarVisibility="Disabled">
@@ -89,13 +93,22 @@
                                     <!-- Up and down need somewhere on this machine to read from or
                                          write to; deleting the cloud copy does not, so a title that
                                          is not installed here can still be cleared out. -->
+                                    <!-- A conflict gets one button that opens the choice, instead of
+                                         up and down, so nobody resolves one by accident. -->
+                                    <Button
+                                        Click="OnResolve"
+                                        IsVisible="{Binding ShowResolve}"
+                                        Content="{ext:Locale Dialog_OpenPak_SavesResolve}" />
+                                    <!-- The running game has its save open: no replacing it underneath. -->
                                     <Button
                                         Padding="8"
                                         MinWidth="0"
                                         MinHeight="0"
                                         Click="OnDownload"
-                                        IsVisible="{Binding Installed}"
-                                        ToolTip.Tip="{ext:Locale Dialog_OpenPak_SavesDownload}">
+                                        IsVisible="{Binding ShowTransfer}"
+                                        IsEnabled="{Binding CanDownload}"
+                                        ToolTip.ShowOnDisabled="True"
+                                        ToolTip.Tip="{Binding DownloadTip}">
                                         <ui:FASymbolIcon Symbol="Download" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                     </Button>
                                     <Button
@@ -103,7 +116,7 @@
                                         MinWidth="0"
                                         MinHeight="0"
                                         Click="OnUpload"
-                                        IsVisible="{Binding Installed}"
+                                        IsVisible="{Binding ShowTransfer}"
                                         ToolTip.Tip="{ext:Locale Dialog_OpenPak_SavesUpload}">
                                         <ui:FASymbolIcon Symbol="Upload" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                     </Button>

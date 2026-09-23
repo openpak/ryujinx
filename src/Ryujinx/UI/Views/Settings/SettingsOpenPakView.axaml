@@ -20,18 +20,20 @@
         <Border Classes="settings">
             <StackPanel Margin="10" HorizontalAlignment="Stretch" Orientation="Vertical" Spacing="10">
 
+                <!-- The order is the UX spec's (§3.13), the same in every OpenPak emulator. -->
                 <TextBlock Classes="h1" Text="{ext:Locale Dialog_OpenPak_SettingsHeaderAccount}" />
 
-                <CheckBox Margin="10,0,0,0" IsChecked="{Binding OpenPakEnabled}">
+                <CheckBox Margin="10,0,0,0" IsChecked="{Binding OpenPakEnabled}" Name="EnableBox">
                     <TextBlock
                         Text="{ext:Locale Dialog_OpenPak_SettingsEnable}"
+                        TextWrapping="Wrap"
                         ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsEnableTooltip}" />
                 </CheckBox>
 
                 <StackPanel Margin="10,0,0,0" Orientation="Horizontal" Spacing="10">
                     <TextBlock Name="AccountStatus" VerticalAlignment="Center" Width="320" TextWrapping="Wrap" />
-                    <Button Name="SignInButton" MinWidth="110" Content="{ext:Locale Dialog_OpenPak_SignIn}" />
-                    <Button Name="SignOutButton" MinWidth="110" Content="{ext:Locale Dialog_OpenPak_SettingsSignOut}" />
+                    <Button Name="SignInButton" MinWidth="110" Content="{ext:Locale Dialog_OpenPak_SignIn}" ToolTip.ShowOnDisabled="True" />
+                    <Button Name="SignOutButton" MinWidth="110" Content="{ext:Locale Dialog_OpenPak_SettingsSignOut}" ToolTip.ShowOnDisabled="True" />
                 </StackPanel>
 
                 <Button
@@ -45,6 +47,7 @@
                     <TextBlock
                         VerticalAlignment="Center"
                         Width="200"
+                        TextWrapping="Wrap"
                         Text="{ext:Locale Dialog_OpenPak_SettingsStartupProfile}"
                         ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsStartupProfileTooltip}" />
                     <ComboBox
@@ -54,10 +57,16 @@
                         ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsStartupProfileTooltip}" />
                 </StackPanel>
 
+                <CheckBox Margin="10,0,0,0" IsChecked="{Binding OpenPakCloudSync}">
+                    <TextBlock Text="{ext:Locale Dialog_OpenPak_SettingsCloudSync}" TextWrapping="Wrap" />
+                </CheckBox>
+
+                <!-- Not in the UX spec's list: crash reports are this build's own, kept beside the account. -->
                 <StackPanel Margin="10,0,0,0" Orientation="Horizontal">
                     <TextBlock
                         VerticalAlignment="Center"
                         Width="200"
+                        TextWrapping="Wrap"
                         Text="{ext:Locale Dialog_OpenPak_SettingsCrashReports}"
                         ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsCrashReportsTooltip}" />
                     <ComboBox
@@ -70,9 +79,30 @@
                     </ComboBox>
                 </StackPanel>
 
+                <TextBlock Classes="h1" Text="{ext:Locale Dialog_OpenPak_SettingsNotificationsHeading}" Margin="0,6,0,0" />
+
+                <CheckBox Margin="10,0,0,0" IsChecked="{Binding OpenPakShowNotifications}">
+                    <TextBlock Text="{ext:Locale Dialog_OpenPak_SettingsNotifications}" TextWrapping="Wrap" />
+                </CheckBox>
+
+                <StackPanel Margin="10,0,0,0" Orientation="Horizontal">
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        Width="200"
+                        TextWrapping="Wrap"
+                        Text="{ext:Locale Dialog_OpenPak_SettingsCorner}" />
+                    <ComboBox Width="320" SelectedIndex="{Binding OpenPakNotificationCornerIndex}">
+                        <ComboBoxItem Content="{ext:Locale Dialog_OpenPak_SettingsCornerBr}" />
+                        <ComboBoxItem Content="{ext:Locale Dialog_OpenPak_SettingsCornerBl}" />
+                        <ComboBoxItem Content="{ext:Locale Dialog_OpenPak_SettingsCornerTr}" />
+                        <ComboBoxItem Content="{ext:Locale Dialog_OpenPak_SettingsCornerTl}" />
+                    </ComboBox>
+                </StackPanel>
+
                 <CheckBox Margin="10,0,0,0" IsChecked="{Binding OpenPakRedirectGuestDns}">
                     <TextBlock
                         Text="{ext:Locale Dialog_OpenPak_SettingsRedirectDns}"
+                        TextWrapping="Wrap"
                         ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsRedirectDnsTooltip}" />
                 </CheckBox>
 
@@ -94,11 +124,15 @@
                                 ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsWebsiteTooltip}" />
                         </StackPanel>
 
-                        <Button
-                            Name="RefreshNetworkButton"
-                            HorizontalAlignment="Left"
-                            MinWidth="200"
-                            Content="{ext:Locale Dialog_OpenPak_SettingsRefreshNetwork}" />
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Button
+                                Name="RefreshNetworkButton"
+                                HorizontalAlignment="Left"
+                                MinWidth="200"
+                                Content="{ext:Locale Dialog_OpenPak_SettingsRefreshNetwork}" />
+                            <!-- The answer stays here, beside the button that asked. -->
+                            <TextBlock Name="NetworkStatus" VerticalAlignment="Center" TextWrapping="Wrap" Opacity="0.8" />
+                        </StackPanel>
                     </StackPanel>
                 </Expander>
             </StackPanel>

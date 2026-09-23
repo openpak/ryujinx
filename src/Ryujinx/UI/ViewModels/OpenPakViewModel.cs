@@ -5,6 +5,7 @@ using Ryujinx.Ava.Common;
 using Ryujinx.Ava.Common.Locale;
 using Ryujinx.Ava.Systems.AppLibrary;
 using Ryujinx.Ava.Systems.OpenPak;
+using Ryujinx.Ava.UI.Views.Dialog;
 using Ryujinx.Common.Logging;
 using Ryujinx.HLE.HOS.Services.Account.OpenPak;
 using Ryujinx.OpenPak;
@@ -56,7 +57,8 @@ namespace Ryujinx.Ava.UI.ViewModels
                 ? []
                 : [.. library.Applications.Items.OrderBy(application => application.Name)];
 
-            SelectedTitle = Titles.FirstOrDefault();
+            // The running game first: it is the one whose mods and news somebody is asking about.
+            SelectedTitle = Titles.FirstOrDefault(title => OpenPakUi.IsRunning(title.IdString)) ?? Titles.FirstOrDefault();
 
             OpenPakAccount.Instance.Changed += OnAccountChanged;
         }
@@ -107,12 +109,35 @@ namespace Ryujinx.Ava.UI.ViewModels
         public string ServerAddress => OpenPakConfig.ResolvedConsoleServer;
 
         public string SwitchPid => OpenPakAccount.Instance.Identity is { Pid: not 0 } identity
-            ? LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_AccountPid, identity.Pid)
+            ? LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_AccountPid, identity.Pid)
             : LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_None];
 
+        /// <summary>"Switch identity": the label of the row above, worded by the table.</summary>
+        public string IdentityLabel => LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_AccountIdentity, "Switch");
+
         public string LinkedConsoles => OpenPakAccount.Instance.Profile is { LinkedPlatforms.Count: > 0 } profile
-            ? string.Join(", ", profile.LinkedPlatforms)
+            ? string.Join(", ", profile.LinkedPlatforms.Select(OpenPakUi.PlatformName))
             : LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_None];
+
+        /// <summary>
+        /// The emulated console's own account inside this one: "Linked as {name}", or — signed in
+        /// and still not linked — the sentence that goes with <c>Try again</c>.
+        /// </summary>
+        public string ConsoleLink => OpenPakSession.Instance.IsLinked
+            ? LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_AccountLinkedAs, OpenPakSession.Instance.Nickname)
+            : LinkFailed
+                ? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_AccountLinkFailed]
+                : LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_None];
+
+        /// <summary>Signed in, with a console server to link against, and not linked: offer Try again.</summary>
+        public bool LinkFailed => SignedIn && OpenPakSession.Instance.Enabled && !OpenPakSession.Instance.IsLinked;
+
+        /// <summary>Sign-in and sign-out wait for the running game to stop (UX spec §5.5).</summary>
+        public bool CanSignOut => SignedIn && !OpenPakUi.GameRunning;
+
+        public string SignOutTip => OpenPakUi.GameRunning
+            ? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_CommonStopGameFirst]
+            : null;
 
         public Bitmap Avatar
         {
@@ -169,6 +194,11 @@ namespace Ryujinx.Ava.UI.ViewModels
 
         public string PlayersOnline { get; private set; } = string.Empty;
 
+        /// <summary>When the status box last looked, in the one time format.</summary>
+        public string HealthRefreshed { get; private set; } = string.Empty;
+
+        public bool HasHealthRefreshed => !string.IsNullOrEmpty(HealthRefreshed);
+
         /// <summary>The status box's one-line verdict, or why there is none.</summary>
         public string HealthHeadline { get; private set; } = string.Empty;
 
@@ -177,13 +207,13 @@ namespace Ryujinx.Ava.UI.ViewModels
         /// <summary>Green for working, red for an outage, grey for no answer at all.</summary>
         public IBrush HealthBrush { get; private set; } = OpenPakBrushes.Down;
 
-        public string UsageText => LocaleManager.Instance.UpdateAndGetDynamicValue(
+        public string UsageText => LocaleManager.GetFormatted(
             LocaleKeys.Dialog_OpenPak_SavesUsage, Bytes(_usage.AllowanceUsed), Bytes(_usage.Allowance));
 
         public bool FriendsEmpty => Friends.Count == 0;
         public bool RequestsEmpty => Requests.Count == 0;
-        public bool InvitationsEmpty => Invitations.Count == 0;
-        public bool SavesEmpty => Saves.Count == 0;
+        public bool InvitationsEmpty => SignedIn && Invitations.Count == 0;
+        public bool SavesEmpty => SignedIn && Saves.Count == 0;
         public bool ModsEmpty => Mods.Count == 0;
         public bool NewsEmpty => NewsFiles.Count == 0;
 
@@ -208,17 +238,81 @@ namespace Ryujinx.Ava.UI.ViewModels
             });
         }
 
+        /// <summary>Ask, then sign out (UX spec §3.5); the window reloads on the change.</summary>
         public async Task SignOutAsync()
         {
-            await Guarded(async () =>
+            if (await OpenPakSignOut.ConfirmAsync())
             {
-                await OpenPakApi.Instance.SignOutAsync(_cancellation.Token);
-
-                OpenPakAccount.Instance.Stop();
-
                 ProjectSignedOut();
 
                 Message = LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_SignOutDone];
+            }
+        }
+
+        /// <summary>Forget what each title-scoped page last loaded, so the next visit fetches again.</summary>
+        public void Forget()
+        {
+            _modsTitle = null;
+            _newsTitle = null;
+        }
+
+        /// <summary>The account's new name; the core checks it and says why when it will not have it.</summary>
+        public async Task ChangeNameAsync(string name)
+        {
+            await Guarded(async () =>
+            {
+                string failure = await OpenPakApi.Instance.SetDisplayNameAsync(name, _cancellation.Token);
+
+                Message = failure ?? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_AccountNameUpdated];
+
+                if (failure == null)
+                {
+                    await OpenPakAccount.Instance.RefreshAsync(_cancellation.Token);
+                    await ProjectAsync();
+                }
+            });
+        }
+
+        /// <summary>A picture off the disk becomes the account's.</summary>
+        public async Task ChangePictureAsync(string path)
+        {
+            await Guarded(async () =>
+            {
+                byte[] image = await File.ReadAllBytesAsync(path, _cancellation.Token);
+
+                string failure = OpenPakImages.Decode(image) == null
+                    ? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_ErrorImage]
+                    : await OpenPakApi.Instance.SetAvatarAsync(image, path, _cancellation.Token);
+
+                Message = failure ?? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_AccountPictureUpdated];
+
+                if (failure == null)
+                {
+                    Avatar = OpenPakImages.Decode(image);
+
+                    await OpenPakAccount.Instance.RefreshAsync(_cancellation.Token);
+                }
+            });
+        }
+
+        /// <summary>
+        /// Link the emulated console again after a sign-in whose link did not happen. Automatic on
+        /// sign-in; this is the one button left for when that failed (there is no QR fallback).
+        /// </summary>
+        public async Task RetryLinkAsync()
+        {
+            await Guarded(async () =>
+            {
+                await OpenPakSession.Instance.EnsureAsync(_cancellation.Token);
+
+                bool linked = OpenPakSession.Instance.IdToken != null &&
+                    await OpenPakSession.Instance.LinkFromAccountAsync(_cancellation.Token);
+
+                Message = linked
+                    ? LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_AccountLinkedAs, OpenPakSession.Instance.Nickname)
+                    : LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_AccountLinkFailed];
+
+                await Dispatcher.UIThread.InvokeAsync(Redraw);
             });
         }
 
@@ -241,8 +335,7 @@ namespace Ryujinx.Ava.UI.ViewModels
                 // whether or not the other person is on a Switch.
                 string failure = await OpenPakApi.Instance.SendFriendRequestAsync(code, _cancellation.Token);
 
-                Message = failure ?? LocaleManager.Instance.UpdateAndGetDynamicValue(
-                    LocaleKeys.Dialog_OpenPak_FriendsAdded, code);
+                Message = failure ?? LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_FriendsAdded, code);
 
                 if (failure == null)
                 {
@@ -306,7 +399,8 @@ namespace Ryujinx.Ava.UI.ViewModels
                 {
                     ApplicationData application = ApplicationOf(save.TitleId);
 
-                    rows.Add(new OpenPakSaveModel(save, application, LocalDetailOf(application)));
+                    rows.Add(new OpenPakSaveModel(save, application, LocalDetailOf(application),
+                        OpenPakSaves.IsConflicted(application), application != null && OpenPakUi.IsRunning(application.IdString)));
                 }
 
                 await Dispatcher.UIThread.InvokeAsync(() =>
@@ -366,15 +460,13 @@ namespace Ryujinx.Ava.UI.ViewModels
 
                     if (failure != null)
                     {
-                        Message = LocaleManager.Instance.UpdateAndGetDynamicValue(
-                            LocaleKeys.Dialog_OpenPak_SavesDeleteFailed, row.TitleName, failure);
+                        Message = failure;
 
                         return;
                     }
                 }
 
-                Message = LocaleManager.Instance.UpdateAndGetDynamicValue(
-                    LocaleKeys.Dialog_OpenPak_SavesDeleted, row.TitleName);
+                Message = LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_SavesDeleted, row.TitleName);
             });
 
             await RefreshSavesAsync();
@@ -395,33 +487,8 @@ namespace Ryujinx.Ava.UI.ViewModels
 
             await Guarded(async () =>
             {
-                OpenPakSaveDownload download = await OpenPakApi.Instance.DownloadSaveAsync(
-                    "switch", application.IdString, _cancellation.Token);
-
-                if (download == null)
-                {
-                    Message = LocaleManager.Instance.UpdateAndGetDynamicValue(
-                        LocaleKeys.Dialog_OpenPak_SavesNoCloud, application.Name);
-
-                    return;
-                }
-
-                if (!ApplicationHelper.TryGetUserSaveDirectory(application, out string directory))
-                {
-                    Message = LocaleManager.Instance.UpdateAndGetDynamicValue(
-                        LocaleKeys.Dialog_OpenPak_SavesNoLocal, application.Name);
-
-                    return;
-                }
-
-                Backup(directory);
-
-                SaveArchive.Unpack(download.Data, directory);
-
-                OpenPakSaves.Remember(directory, download.Version);
-
-                Message = LocaleManager.Instance.UpdateAndGetDynamicValue(
-                    LocaleKeys.Dialog_OpenPak_SavesDownloaded, application.Name);
+                Message = await OpenPakSaves.TakeCloudAsync(application, _cancellation.Token)
+                    ?? LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_SavesDownloaded, application.Name);
             });
 
             await RefreshSavesAsync();
@@ -434,35 +501,42 @@ namespace Ryujinx.Ava.UI.ViewModels
                 return;
             }
 
+            bool uploaded = false;
+
             await Guarded(async () =>
             {
-                if (!ApplicationHelper.TryGetUserSaveDirectory(application, out string directory) ||
-                    !Directory.EnumerateFileSystemEntries(directory).Any())
-                {
-                    Message = LocaleManager.Instance.UpdateAndGetDynamicValue(
-                        LocaleKeys.Dialog_OpenPak_SavesNoLocal, application.Name);
-
-                    return;
-                }
-
-                byte[] packed = SaveArchive.Pack(directory);
-
                 OpenPakSaveModel existing = Saves.FirstOrDefault(save =>
                     save.TitleId.Equals(application.IdString, StringComparison.OrdinalIgnoreCase));
 
-                (string failure, string version) = await OpenPakApi.Instance.UploadSaveAsync("switch", application.IdString,
-                    packed, existing?.NewestVersion, Environment.MachineName, _cancellation.Token);
+                string failure = await OpenPakSaves.UploadAsync(application, existing?.NewestVersion, _cancellation.Token);
 
-                Message = failure ?? LocaleManager.Instance.UpdateAndGetDynamicValue(
-                    LocaleKeys.Dialog_OpenPak_SavesUploaded, application.Name);
+                Message = failure ?? LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_SavesUploaded, application.Name);
 
-                if (failure == null)
-                {
-                    OpenPakSaves.Remember(directory, version);
-
-                    await RefreshSavesAsync();
-                }
+                uploaded = failure == null;
             });
+
+            if (uploaded)
+            {
+                await RefreshSavesAsync();
+            }
+        }
+
+        /// <summary>The conflict dialog for one row (UX spec §3.9); its answer goes to the status line.</summary>
+        public async Task ResolveConflictAsync(OpenPakSaveModel row)
+        {
+            if (row?.Application == null)
+            {
+                return;
+            }
+
+            string result = await OpenPakConflict.ResolveAsync(row.Application, toastResult: false);
+
+            if (result != null)
+            {
+                Message = result;
+
+                await RefreshSavesAsync();
+            }
         }
 
         // ---- mods ----
@@ -494,7 +568,7 @@ namespace Ryujinx.Ava.UI.ViewModels
                     foreach (OpenPakMod mod in mods)
                     {
                         Mods.Add(new OpenPakModModel(mod, favourite.Contains(mod.Id),
-                            OpenPakMods.IsInstalled(SelectedTitle.IdString, mod)));
+                            OpenPakMods.IsInstalled(SelectedTitle.IdString, mod), OpenPakUi.IsRunning(SelectedTitle.IdString)));
                     }
 
                     OnPropertyChanged(nameof(ModsEmpty));
@@ -513,8 +587,7 @@ namespace Ryujinx.Ava.UI.ViewModels
                     // Null here is either a failed download or a hash that did not match, and the
                     // second is the one worth naming: it means the bytes were not what the
                     // catalogue published.
-                    Message = LocaleManager.Instance.UpdateAndGetDynamicValue(
-                        LocaleKeys.Dialog_OpenPak_ModsInstallFailed, mod.Name);
+                    Message = LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_ModsInstallFailed, mod.Name);
 
                     return;
                 }
@@ -528,9 +601,28 @@ namespace Ryujinx.Ava.UI.ViewModels
 
                 mod.Installed = true;
 
-                Message = LocaleManager.Instance.UpdateAndGetDynamicValue(
-                    LocaleKeys.Dialog_OpenPak_ModsInstalledToast, mod.Name);
+                Message = LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_ModsInstalledToast, mod.Name);
             });
+        }
+
+        /// <summary>Take an installed mod out of the title's mod folder again.</summary>
+        public void UninstallMod(OpenPakModModel mod)
+        {
+            if (SelectedTitle == null)
+            {
+                return;
+            }
+
+            if (OpenPakMods.Uninstall(SelectedTitle.IdString, mod.Mod, out string failure))
+            {
+                mod.Installed = false;
+
+                Message = LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_ModsUninstalled, mod.Name);
+            }
+            else
+            {
+                Message = failure;
+            }
         }
 
         public async Task FavouriteModAsync(OpenPakModModel mod)
@@ -578,8 +670,7 @@ namespace Ryujinx.Ava.UI.ViewModels
 
                     NewsValidFrom = manifest == null
                         ? string.Empty
-                        : LocaleManager.Instance.UpdateAndGetDynamicValue(
-                            LocaleKeys.Dialog_OpenPak_NewsValidFrom, manifest.ValidFrom.ToLocalTime());
+                        : LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_NewsValidFrom, OpenPakUi.Time(manifest.ValidFrom));
 
                     OnPropertyChanged(nameof(NewsEmpty));
                     OnPropertyChanged(nameof(NewsValidFrom));
@@ -614,8 +705,7 @@ namespace Ryujinx.Ava.UI.ViewModels
                     written++;
                 }
 
-                Message = LocaleManager.Instance.UpdateAndGetDynamicValue(
-                    LocaleKeys.Dialog_OpenPak_NewsSaved, written, directory);
+                Message = LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_NewsSaved, written, directory);
             });
         }
 
@@ -631,16 +721,17 @@ namespace Ryujinx.Ava.UI.ViewModels
                 Task<OpenPakStatus> statusTask = OpenPakApi.Instance.StatusAsync(_cancellation.Token);
                 Task<OpenPakHealth> healthTask = OpenPakApi.Instance.HealthAsync(_cancellation.Token);
                 Task<long> edgeTask = ProbeEdgeAsync(_cancellation.Token);
-                Task<OpenPakSessionModel> natTask = NatRowAsync(_cancellation.Token);
 
-                await Task.WhenAll(statusTask, healthTask, edgeTask, natTask);
+                await Task.WhenAll(statusTask, healthTask, edgeTask);
 
                 OpenPakStatus status = statusTask.Result;
                 OpenPakHealth health = healthTask.Result;
 
                 List<OpenPakSessionModel> session = SessionRows(edgeTask.Result);
 
-                session.Add(natTask.Result);
+                // The connection test is the person's to start (it sends a burst of UDP); until
+                // they do, its two rows say so.
+                session.AddRange(ConnectionRows());
 
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
@@ -658,15 +749,14 @@ namespace Ryujinx.Ava.UI.ViewModels
                         SessionState.Add(row);
                     }
 
-                    HealthHeadline = health?.Headline ?? LocaleManager.Instance.UpdateAndGetDynamicValue(
+                    HealthHeadline = health?.Headline ?? LocaleManager.GetFormatted(
                         LocaleKeys.Dialog_OpenPak_StatusNoHealth, OpenPakConfig.StatusUrl);
 
-                    HealthSummary = health == null
+                    HealthSummary = health?.Summary ?? string.Empty;
+
+                    HealthRefreshed = string.IsNullOrEmpty(health?.Generated)
                         ? string.Empty
-                        : health.Summary + (string.IsNullOrEmpty(health.Generated)
-                            ? string.Empty
-                            : " " + LocaleManager.Instance.UpdateAndGetDynamicValue(
-                                LocaleKeys.Dialog_OpenPak_StatusRefreshed, health.Generated));
+                        : LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_StatusRefreshed, OpenPakUi.Time(health.Generated));
 
                     // "some" is the status box's word for a partial outage; anything but "ok" is
                     // something somebody should see, and only a total one is worth alarming red.
@@ -679,22 +769,22 @@ namespace Ryujinx.Ava.UI.ViewModels
 
                     OnPropertyChanged(nameof(HealthHeadline));
                     OnPropertyChanged(nameof(HealthSummary));
+                    OnPropertyChanged(nameof(HealthRefreshed));
+                    OnPropertyChanged(nameof(HasHealthRefreshed));
                     OnPropertyChanged(nameof(HealthBrush));
                     TitlePopulations.Clear();
                     NetworkPopulations.Clear();
 
                     if (status == null)
                     {
-                        PlayersOnline = LocaleManager.Instance.UpdateAndGetDynamicValue(
-                            LocaleKeys.Dialog_OpenPak_Unreachable, OpenPakConfig.WebsiteUrl);
+                        PlayersOnline = LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_ErrorUnreachable, OpenPakConfig.WebsiteUrl);
 
                         OnPropertyChanged(nameof(PlayersOnline));
 
                         return;
                     }
 
-                    PlayersOnline = LocaleManager.Instance.UpdateAndGetDynamicValue(
-                        LocaleKeys.Dialog_OpenPak_StatusPlayers, status.PlayersOnline);
+                    PlayersOnline = LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_StatusPlayers, status.PlayersOnline);
 
                     foreach (OpenPakPopulation population in status.Titles)
                     {
@@ -703,7 +793,7 @@ namespace Ryujinx.Ava.UI.ViewModels
 
                     foreach (OpenPakPopulation population in status.Networks)
                     {
-                        NetworkPopulations.Add(new OpenPakPopulationModel(population.Key, population.Players));
+                        NetworkPopulations.Add(new OpenPakPopulationModel(OpenPakUi.PlatformName(population.Key), population.Players));
                     }
 
                     OnPropertyChanged(nameof(PlayersOnline));
@@ -711,43 +801,139 @@ namespace Ryujinx.Ava.UI.ViewModels
             });
         }
 
-        private static (DateTime At, OpenPakNatCheck.Result Result)? _nat;
+        // The last connection test, for as long as the emulator runs: the page refreshes every
+        // thirty seconds, and a NAT does not change that often.
+        private static OpenPakNatCheck.Result _nat;
+        private static long? _ping;
+        private static bool _tested;
+        private static bool _testing;
+        private static DateTime _testedAt = DateTime.MinValue;
+
+        /// <summary><c>Test connection</c> is offered once every ten seconds, and never twice at once.</summary>
+        public bool CanTestConnection => !_testing && DateTime.UtcNow - _testedAt >= TimeSpan.FromSeconds(10);
 
         /// <summary>
-        /// The console's NAT type test, run from this machine against the nncs pair the redirect
-        /// points a game at. Kept five minutes: the page refreshes every thirty seconds, and a NAT
-        /// does not change that often.
+        /// The console's NAT type test and a ping, run from this machine against the nncs pair the
+        /// redirect points a game at. Outside the page's request queue: it takes a few seconds of
+        /// UDP and should not hold every other button on the page.
         /// </summary>
-        private static async Task<OpenPakSessionModel> NatRowAsync(CancellationToken cancellationToken)
+        public async Task TestConnectionAsync()
+        {
+            if (!CanTestConnection)
+            {
+                return;
+            }
+
+            _testing = true;
+
+            OnPropertyChanged(nameof(CanTestConnection));
+
+            ShowConnectionRows();
+
+            try
+            {
+                if (OpenPakNatCheck.Targets(OpenPakNetworkProfileService.Applied) is { } targets)
+                {
+                    Task<OpenPakNatCheck.Result> nat = OpenPakNatCheck.RunAsync(targets.Primary, targets.Secondary, _cancellation.Token);
+                    Task<long?> ping = OpenPakNatCheck.PingAsync(targets.Primary, _cancellation.Token);
+
+                    await Task.WhenAll(nat, ping);
+
+                    (_nat, _ping) = (nat.Result, ping.Result);
+                }
+
+                _tested = true;
+            }
+            catch (Exception exception) when (exception is SocketException or OperationCanceledException)
+            {
+                _nat = new OpenPakNatCheck.Result(OpenPakNatCheck.Mapping.Unknown, OpenPakNatCheck.Filtering.Unknown, null);
+                _ping = null;
+                _tested = true;
+            }
+            finally
+            {
+                _testing = false;
+                _testedAt = DateTime.UtcNow;
+            }
+
+            ShowConnectionRows();
+
+            OnPropertyChanged(nameof(CanTestConnection));
+
+            // Offered again in ten seconds.
+            await Task.Delay(TimeSpan.FromSeconds(10));
+
+            OnPropertyChanged(nameof(CanTestConnection));
+        }
+
+        private void ShowConnectionRows() => Dispatcher.UIThread.Post(() =>
+        {
+            OpenPakSessionModel[] rows = ConnectionRows();
+
+            foreach (OpenPakSessionModel row in rows)
+            {
+                int index = SessionState.ToList().FindIndex(existing => existing.Name == row.Name);
+
+                if (index >= 0)
+                {
+                    SessionState[index] = row;
+                }
+                else
+                {
+                    SessionState.Add(row);
+                }
+            }
+        });
+
+        /// <summary>The <c>NAT type</c> and <c>Ping</c> rows as the last test left them.</summary>
+        private static OpenPakSessionModel[] ConnectionRows()
         {
             LocaleManager locale = LocaleManager.Instance;
 
+            string natName = locale[LocaleKeys.Dialog_OpenPak_StatusNat];
+            string pingName = locale[LocaleKeys.Dialog_OpenPak_StatusPing];
+
+            if (_testing)
+            {
+                string checking = locale[LocaleKeys.Dialog_OpenPak_StatusChecking];
+
+                return [new(natName, checking, null), new(pingName, checking, null)];
+            }
+
+            if (!_tested)
+            {
+                string untested = locale[LocaleKeys.Dialog_OpenPak_StatusNotTested];
+
+                return [new(natName, untested, null), new(pingName, untested, null)];
+            }
+
+            OpenPakSessionModel nat;
+
             if (OpenPakNatCheck.Targets(OpenPakNetworkProfileService.Applied) is not { } targets)
             {
-                return new OpenPakSessionModel(locale[LocaleKeys.Dialog_OpenPak_StatusNat],
-                    locale[LocaleKeys.Dialog_OpenPak_StatusNatNoProfile], false);
+                nat = new(natName, locale[LocaleKeys.Dialog_OpenPak_StatusNatNoProfile], false);
             }
-
-            if (_nat is not { } cached || DateTime.UtcNow - cached.At > TimeSpan.FromMinutes(5))
+            else if (_nat == null || _nat.Mapping == OpenPakNatCheck.Mapping.Unknown)
             {
-                try
+                nat = new(natName, LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_StatusNatNoAnswer, targets.Primary, targets.Secondary), false);
+            }
+            else
+            {
+                bool open = _nat.Type is 'A' or 'B';
+
+                // Open or Strict is the answer; the letter and the mechanics are there for whoever
+                // hovers to ask how it was reached.
+                nat = new(natName, locale[open ? LocaleKeys.Dialog_OpenPak_StatusNatOpen : LocaleKeys.Dialog_OpenPak_StatusNatStrict], open)
                 {
-                    _nat = cached = (DateTime.UtcNow, await OpenPakNatCheck.RunAsync(targets.Primary, targets.Secondary, cancellationToken));
-                }
-                catch (Exception exception) when (exception is SocketException or OperationCanceledException)
-                {
-                    cached = (DateTime.UtcNow, new OpenPakNatCheck.Result(OpenPakNatCheck.Mapping.Unknown, OpenPakNatCheck.Filtering.Unknown, null));
-                }
+                    Tip = LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_StatusNatType, _nat.Type, _nat.Mapping, _nat.Filtering, _nat.External),
+                };
             }
 
-            OpenPakNatCheck.Result result = cached.Result;
+            OpenPakSessionModel ping = _ping is { } milliseconds
+                ? new(pingName, LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_StatusPingValue, milliseconds), true)
+                : new(pingName, locale[LocaleKeys.Dialog_OpenPak_None], false);
 
-            return new OpenPakSessionModel(locale[LocaleKeys.Dialog_OpenPak_StatusNat],
-                result.Mapping == OpenPakNatCheck.Mapping.Unknown
-                    ? locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusNatNoAnswer, targets.Primary, targets.Secondary)
-                    : locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusNatType, result.Type,
-                        result.Mapping, result.Filtering, result.External),
-                result.Type is 'A' or 'B');
+            return [nat, ping];
         }
 
         /// <summary>
@@ -814,14 +1000,14 @@ namespace Ryujinx.Ava.UI.ViewModels
             [
                 new OpenPakSessionModel(locale[LocaleKeys.Dialog_OpenPak_StatusAccount],
                     signedIn
-                        ? locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusAccountSignedIn,
+                        ? LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_StatusAccountSignedIn,
                             name ?? locale[LocaleKeys.Dialog_OpenPak_None])
                         : locale[LocaleKeys.Dialog_OpenPak_StatusAccountSignedOut],
                     signedIn),
 
                 new OpenPakSessionModel(locale[LocaleKeys.Dialog_OpenPak_StatusLink],
                     session.IsLinked
-                        ? locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusLinked,
+                        ? LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_StatusLinked,
                             session.Nickname, session.FriendCode ?? locale[LocaleKeys.Dialog_OpenPak_None])
                         : locale[LocaleKeys.Dialog_OpenPak_StatusNotLinked],
                     session.IsLinked),
@@ -830,15 +1016,15 @@ namespace Ryujinx.Ava.UI.ViewModels
                     edge switch
                     {
                         -2 => locale[LocaleKeys.Dialog_OpenPak_StatusEdgeNone],
-                        -1 => locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusEdgeDown, address),
-                        _ => locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusEdgeUp, address, edge),
+                        -1 => LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_StatusEdgeDown, address),
+                        _ => LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_StatusEdgeUp, address, edge),
                     },
                     edge >= 0),
 
                 new OpenPakSessionModel(locale[LocaleKeys.Dialog_OpenPak_StatusPresence],
                     presence == null
                         ? locale[LocaleKeys.Dialog_OpenPak_StatusPresenceNone]
-                        : locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusPresencePublished, presence),
+                        : LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_StatusPresencePublished, presence),
                     presence != null),
 
                 // Said plainly rather than dressed up as a connection: a console is pushed its
@@ -847,8 +1033,8 @@ namespace Ryujinx.Ava.UI.ViewModels
                     !session.Beating
                         ? locale[LocaleKeys.Dialog_OpenPak_StatusNotificationsOff]
                         : session.PushConnected
-                            ? locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusNotificationsPushed, waiting)
-                            : locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusNotificationsPolled, waiting),
+                            ? LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_StatusNotificationsPushed, waiting)
+                            : LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_StatusNotificationsPolled, waiting),
                     session.Beating),
             ];
         }
@@ -903,7 +1089,8 @@ namespace Ryujinx.Ava.UI.ViewModels
             {
                 Logger.Warning?.Print(LogClass.Application, $"[OpenPak] {exception.Message}");
 
-                Message = exception.Message;
+                // Exception text is for the log (UX spec §3.12); a person gets the sentence.
+                Message = OpenPakText.Unreachable(OpenPakConfig.WebsiteUrl);
             }
             finally
             {
@@ -927,8 +1114,10 @@ namespace Ryujinx.Ava.UI.ViewModels
             {
                 Friends.Clear();
 
-                // Whoever is there to play with first; OrderBy is stable, so the server's order holds within each.
-                foreach (OpenPakFriend friend in account.Friends.OrderByDescending(friend => friend.Online))
+                // Whoever is there to play with first, then by name.
+                foreach (OpenPakFriend friend in account.Friends
+                    .OrderByDescending(friend => friend.Online)
+                    .ThenBy(friend => friend.DisplayName, StringComparer.CurrentCultureIgnoreCase))
                 {
                     Friends.Add(new OpenPakFriendModel(friend, NameOf(friend.TitleId), ApplicationOf(friend.TitleId)));
                 }
@@ -947,7 +1136,7 @@ namespace Ryujinx.Ava.UI.ViewModels
                 foreach (OpenPakInvitation invitation in
                     account.Invitations.Concat(OpenPakSession.Instance.Invitations))
                 {
-                    Invitations.Add(new OpenPakInvitationModel(invitation, NameOf(invitation.TitleId)));
+                    Invitations.Add(new OpenPakInvitationModel(invitation, NameOf(invitation.TitleId), ApplicationOf(invitation.TitleId)));
                 }
 
                 Redraw();
@@ -1018,6 +1207,10 @@ namespace Ryujinx.Ava.UI.ViewModels
             OnPropertyChanged(nameof(ServerAddress));
             OnPropertyChanged(nameof(SwitchPid));
             OnPropertyChanged(nameof(LinkedConsoles));
+            OnPropertyChanged(nameof(ConsoleLink));
+            OnPropertyChanged(nameof(LinkFailed));
+            OnPropertyChanged(nameof(CanSignOut));
+            OnPropertyChanged(nameof(SignOutTip));
             OnPropertyChanged(nameof(FriendsEmpty));
             OnPropertyChanged(nameof(RequestsEmpty));
             OnPropertyChanged(nameof(InvitationsEmpty));
@@ -1090,26 +1283,8 @@ namespace Ryujinx.Ava.UI.ViewModels
             string synced = OpenPakSaves.Read(directory);
 
             return synced == null
-                ? LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_SavesLocalNever, $"{written:g}")
-                : LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_SavesLocal, $"{written:g}", synced);
-        }
-
-        /// <summary>Move a save directory aside before it is overwritten, keeping one generation.</summary>
-        private static void Backup(string directory)
-        {
-            string backup = directory.TrimEnd(Path.DirectorySeparatorChar) + ".openpak-backup";
-
-            if (Directory.Exists(backup))
-            {
-                Directory.Delete(backup, recursive: true);
-            }
-
-            if (Directory.Exists(directory))
-            {
-                Directory.Move(directory, backup);
-            }
-
-            Directory.CreateDirectory(directory);
+                ? LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_SavesLocalNever, OpenPakUi.Time(written.Value))
+                : LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_SavesLocal, OpenPakUi.Time(written.Value), synced);
         }
 
         /// <summary>A size as a person reads it. Shared with the rows, which show the same figures.</summary>

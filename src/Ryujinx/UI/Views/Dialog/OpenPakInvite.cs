@@ -6,9 +6,9 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using FluentAvalonia.UI.Controls;
-using Humanizer;
 using Ryujinx.Ava.Common.Locale;
 using Ryujinx.Ava.Systems.AppLibrary;
+using Ryujinx.Ava.Systems.OpenPak;
 using Ryujinx.Ava.UI.Helpers;
 using Ryujinx.Ava.UI.ViewModels;
 using Ryujinx.HLE.HOS.Services.Account.OpenPak;
@@ -36,7 +36,7 @@ namespace Ryujinx.Ava.UI.Views.Dialog
         /// </summary>
         public static async Task<IReadOnlyList<OpenPakFriend>> PickFriendsAsync(int max, Func<string, string> titleName)
         {
-            // Online first: an invitation to somebody who is not there is one nobody answers.
+            // Online first, then by name: an invitation to somebody who is not there is one nobody answers.
             List<OpenPakFriend> friends = OpenPakAccount.Instance.Friends
                 .OrderByDescending(friend => friend.Online)
                 .ThenBy(friend => friend.DisplayName, StringComparer.CurrentCultureIgnoreCase)
@@ -156,7 +156,9 @@ namespace Ryujinx.Ava.UI.Views.Dialog
                     {
                         Text = friends.Count == 0
                             ? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_InviteNoFriends]
-                            : LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_InviteHint, max),
+                            : max == 1
+                                ? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_InviteHintOne]
+                                : LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_InviteHint, max),
                         TextWrapping = TextWrapping.Wrap,
                     },
                     new ScrollViewer
@@ -182,7 +184,7 @@ namespace Ryujinx.Ava.UI.Views.Dialog
 
         /// <summary>
         /// The offer to join, told the way the console's own overlay tells it: who is asking and
-        /// what they look like, the game and its icon, anything they wrote, and how long ago it
+        /// what they look like, the game and its icon, anything they wrote, and when it
         /// was sent. Join and Ignore underneath; true for Join.
         /// </summary>
         public static async Task<bool> AskJoinAsync(OpenPakInvitation invitation, ApplicationData application)
@@ -300,8 +302,7 @@ namespace Ryujinx.Ava.UI.Views.Dialog
             {
                 text.Children.Add(new TextBlock
                 {
-                    Text = LocaleManager.Instance.UpdateAndGetDynamicValue(
-                        LocaleKeys.Dialog_OpenPak_InviteReceivedSent, sent.Humanize()),
+                    Text = LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_InviteReceivedSent, OpenPakUi.Time(sent)),
                     Opacity = 0.7,
                 });
             }
@@ -315,7 +316,7 @@ namespace Ryujinx.Ava.UI.Views.Dialog
         /// What the sender wrote, in the language this install reads: the UI language first, then
         /// the module's own order. Null when they wrote nothing in any of them.
         /// </summary>
-        private static string MessageFor(IReadOnlyDictionary<string, string> messages)
+        internal static string MessageFor(IReadOnlyDictionary<string, string> messages)
         {
             if (messages is not { Count: > 0 })
             {

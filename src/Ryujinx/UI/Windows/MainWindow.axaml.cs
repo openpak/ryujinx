@@ -149,6 +149,11 @@ namespace Ryujinx.Ava.UI.Windows
 
             NotificationHelper.SetNotificationManager(this);
 
+            // OpenPak's toasts keep their own corner, and the core project reads its sentences
+            // from the same locale files as the rest of the UI.
+            OpenPakToast.Attach(this);
+            Systems.OpenPak.OpenPakUi.InstallStrings();
+
             Executor.ExecuteBackgroundAsync(async () =>
             {
                 await ShowIntelMacWarningAsync();
@@ -454,6 +459,10 @@ namespace Ryujinx.Ava.UI.Windows
                 friend => AnnounceFriend(friend, LocaleKeys.Dialog_OpenPak_NotificationFriendOnline);
             OpenPakAccount.Instance.FriendStartedPlaying +=
                 friend => AnnounceFriend(friend, LocaleKeys.Dialog_OpenPak_NotificationFriendPlaying);
+            OpenPakAccount.Instance.FriendRequestReceived += request =>
+                OpenPakToast.Show(OpenPakToast.Category.FriendRequest,
+                    LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_NotificationFriendRequest, NameOrFriend(request.DisplayName)),
+                    () => _ = OpenPakWindow.Show(OpenPakWindow.Page.Friends));
 
             // An invitation is only worth anything while the person who sent it is still waiting,
             // so it is said out loud wherever they are, the same as a friend coming online.
@@ -565,8 +574,11 @@ namespace Ryujinx.Ava.UI.Windows
             // a password store that forgot it — says so, instead of quietly playing offline.
             if (!OpenPakApi.Instance.SignedIn && OpenPakLinks.Get(OpenPakConfig.ProfileId) != null)
             {
-                NotificationHelper.ShowWarning(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
-                    LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_SignInAgain, OpenPakConfig.ProfileName));
+                // A toast, never a blocking prompt (UX spec §5.1); clicking it signs in again.
+                OpenPakToast.Show(OpenPakToast.Category.OpenPak,
+                    LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_SignInAgain, OpenPakConfig.ProfileName),
+                    () => _ = Views.Dialog.OpenPakSignInView.Show(),
+                    Avalonia.Controls.Notifications.NotificationType.Warning);
             }
         }
 
@@ -603,7 +615,7 @@ namespace Ryujinx.Ava.UI.Windows
                 SelectedUserId = AccountManager.LastOpenedUser.UserId,
             };
 
-            (HLE.HOS.Services.Account.Acc.UserId chosen, bool addAccount) = await ProfileSelectorDialog.ShowStartupDialog(picker);
+            (HLE.HOS.Services.Account.Acc.UserId chosen, bool addAccount, bool remember) = await ProfileSelectorDialog.ShowStartupDialog(picker);
 
             if (addAccount)
             {
@@ -612,6 +624,12 @@ namespace Ryujinx.Ava.UI.Windows
             else if (!chosen.IsNull)
             {
                 AccountManager.OpenUser(chosen);
+
+                if (remember)
+                {
+                    ConfigurationState.Instance.OpenPak.StartupProfile.Value = chosen.ToString();
+                    ConfigurationState.Instance.ToFileFormat().SaveConfig(Program.ConfigurationPath);
+                }
             }
         }
 
@@ -626,9 +644,10 @@ namespace Ryujinx.Ava.UI.Windows
                 return;
             }
 
-            NotificationHelper.ShowInformation("OpenPak",
-                LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_NotificationInvitation,
-                    invitation.From, TitleName(invitation.TitleId)));
+            OpenPakToast.Show(OpenPakToast.Category.Invite,
+                LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_NotificationInvitation,
+                    NameOrFriend(invitation.From), TitleName(invitation.TitleId)),
+                () => _ = OpenPakWindow.Show(OpenPakWindow.Page.Invitations));
         });
 
         private string TitleName(string titleId) => TitleOf(titleId)?.Name ?? titleId.ToUpperInvariant();
@@ -669,31 +688,63 @@ namespace Ryujinx.Ava.UI.Windows
         {
             bool join = await Views.Dialog.OpenPakInvite.AskJoinAsync(invitation, TitleOf(invitation.TitleId));
 
-            // The game may have been closed while the question was up.
-            if (join && ViewModel.AppHost == host && host.Device?.System != null)
+            if (join)
             {
-                byte[] data = [];
-
-                try
-                {
-                    data = string.IsNullOrEmpty(invitation.ApplicationData) ? [] : Convert.FromBase64String(invitation.ApplicationData);
-                }
-                catch (FormatException)
-                {
-                    Logger.Warning?.Print(LogClass.Application, $"[OpenPak] Invitation {invitation.InvitationId} carries data that is not base64");
-                }
-
-                // The signed-in profile is the invited one; the Uid tells the game which user joins.
-                UserId user = OpenPakConfig.ProfileId.Length == 32
-                    ? new UserId(OpenPakConfig.ProfileId)
-                    : AccountManager.LastOpenedUser.UserId;
-
-                host.Device.System.FriendInvitations.Push(user, data);
-
-                Logger.Info?.Print(LogClass.Application, $"[OpenPak] Joining {invitation.From}'s invitation {invitation.InvitationId}");
+                HandOver(invitation, host);
             }
 
             await OpenPakSession.Instance.DismissInvitationAsync(invitation.InvitationId, CancellationToken.None);
+        }
+
+        /// <summary>
+        /// Join from the Invitations page while its game is running: the same hand-over as the
+        /// prompt's Join, without asking again.
+        /// </summary>
+        public async Task JoinInvitationAsync(OpenPakInvitation invitation)
+        {
+            if (invitation == null)
+            {
+                return;
+            }
+
+            _offeredInvitations.Add(invitation.InvitationId);
+
+            HandOver(invitation, ViewModel.AppHost);
+
+            await OpenPakSession.Instance.DismissInvitationAsync(invitation.InvitationId, CancellationToken.None);
+        }
+
+        private void HandOver(OpenPakInvitation invitation, AppHost host)
+        {
+            // The game may have been closed while the question was up.
+            if (host == null || ViewModel.AppHost != host || host.Device?.System == null)
+            {
+                OpenPakToast.Show(OpenPakToast.Category.Invite,
+                    LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_InviteHandoverFailed], null,
+                    Avalonia.Controls.Notifications.NotificationType.Warning);
+
+                return;
+            }
+
+            byte[] data = [];
+
+            try
+            {
+                data = string.IsNullOrEmpty(invitation.ApplicationData) ? [] : Convert.FromBase64String(invitation.ApplicationData);
+            }
+            catch (FormatException)
+            {
+                Logger.Warning?.Print(LogClass.Application, $"[OpenPak] Invitation {invitation.InvitationId} carries data that is not base64");
+            }
+
+            // The signed-in profile is the invited one; the Uid tells the game which user joins.
+            UserId user = OpenPakConfig.ProfileId.Length == 32
+                ? new UserId(OpenPakConfig.ProfileId)
+                : AccountManager.LastOpenedUser.UserId;
+
+            host.Device.System.FriendInvitations.Push(user, data);
+
+            Logger.Info?.Print(LogClass.Application, $"[OpenPak] Joining {invitation.From}'s invitation {invitation.InvitationId}");
         }
 
         /// <summary>Toast one presence change, with the title named the way the game list names it.</summary>
@@ -701,7 +752,7 @@ namespace Ryujinx.Ava.UI.Windows
         {
             Dispatcher.UIThread.Post(() =>
             {
-                string name = string.IsNullOrWhiteSpace(friend.DisplayName) ? "A friend" : friend.DisplayName;
+                string name = NameOrFriend(friend.DisplayName);
                 string title = string.Empty;
 
                 if (!string.IsNullOrEmpty(friend.TitleId))
@@ -711,10 +762,15 @@ namespace Ryujinx.Ava.UI.Windows
                             ?? friend.TitleId.ToUpperInvariant();
                 }
 
-                NotificationHelper.ShowInformation("OpenPak",
-                    LocaleManager.Instance.UpdateAndGetDynamicValue(key, name, title));
+                OpenPakToast.Show(OpenPakToast.Category.FriendOnline,
+                    LocaleManager.GetFormatted(key, name, title),
+                    () => _ = OpenPakWindow.Show(OpenPakWindow.Page.Friends));
             });
         }
+
+        /// <summary>A name to put in a sentence: theirs, or the table's word for a friend with none.</summary>
+        private static string NameOrFriend(string name)
+            => string.IsNullOrWhiteSpace(name) ? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_FriendUnknown] : name;
 
         private void SetWindowSizePosition()
         {

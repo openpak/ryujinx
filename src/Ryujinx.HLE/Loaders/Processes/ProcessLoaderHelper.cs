@@ -127,6 +127,13 @@ namespace Ryujinx.HLE.Loaders.Processes
             {
                 Logger.Error?.Print(LogClass.Application, $"Error calling EnsureApplicationSaveData. Result code {resultCode.ToStringWithName()}");
             }
+            else
+            {
+                // The delivery cache now exists if the title has one: fill it from OpenPak's news
+                // service before the title can ask for it.
+                HOS.Services.Account.OpenPak.OpenPakBcatDelivery.Deliver(device.System.LibHacHorizonManager.RyujinxClient.Fs,
+                    applicationId.Value, control.BcatDeliveryCacheStorageSize);
+            }
 
             return resultCode;
         }

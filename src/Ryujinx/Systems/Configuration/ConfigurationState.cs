@@ -10,6 +10,7 @@ using System;
 using System.Linq;
 using Key = Ryujinx.Common.Configuration.Hid.Key;
 using OpenPakConfig = Ryujinx.OpenPak.OpenPakConfig;
+using OpenPakCrashReports = Ryujinx.OpenPak.OpenPakCrashReports;
 using PhysicalKey = Ryujinx.Common.Configuration.Hid.PhysicalKey;
 
 namespace Ryujinx.Ava.Systems.Configuration
@@ -160,6 +161,7 @@ namespace Ryujinx.Ava.Systems.Configuration
                 OpenPakRedirectGuestDns = OpenPak.RedirectGuestDns,
                 OpenPakAsked = OpenPak.Asked,
                 OpenPakStartupProfile = OpenPak.StartupProfile,
+                OpenPakCrashReports = OpenPak.CrashReports,
                 EnableGdbStub = Debug.EnableGdbStub,
                 GdbStubPort = Debug.GdbStubPort,
                 DebuggerSuspendOnStart = Debug.DebuggerSuspendOnStart,
@@ -244,6 +246,7 @@ namespace Ryujinx.Ava.Systems.Configuration
             OpenPak.RedirectGuestDns.Value = true;
             OpenPak.Asked.Value = false;
             OpenPak.StartupProfile.Value = string.Empty;
+            OpenPak.CrashReports.Value = OpenPakCrashReports.Ask;
             UI.GuiColumns.FavColumn.Value = true;
             UI.GuiColumns.IconColumn.Value = true;
             UI.GuiColumns.AppColumn.Value = true;

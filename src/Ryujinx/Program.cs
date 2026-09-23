@@ -29,6 +29,7 @@ using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Threading.Tasks;
 using Ryujinx.HLE.HOS.Services.Account.OpenPak;
+using Ryujinx.OpenPak;
 
 namespace Ryujinx.Ava
 {
@@ -264,6 +265,9 @@ namespace Ryujinx.Ava
             // Initialize the logger system.
             LoggerModule.Initialize();
 
+            // The last lines logged, for a crash report to carry.
+            Logger.AddTarget(OpenPakCrashReports.Tail);
+
             // Initialize Discord integration.
             DiscordIntegrationModule.Initialize();
 
@@ -485,6 +489,12 @@ namespace Ryujinx.Ava
 
             if (isTerminating)
             {
+                // Saved, never sent: the next launch asks whether to (OpenPakCrashReports).
+                Exception first = exceptions[0];
+
+                OpenPakCrashReports.Record(first?.GetType().FullName, first?.Message, initialException?.ToString(),
+                    fields: new Dictionary<string, string> { ["kind"] = "unhandled_exception" });
+
                 Logger.Flush();
                 Exit();
             }

@@ -593,6 +593,8 @@ namespace Ryujinx.Ava.Systems
         {
             (_keyboardInterface as AvaloniaKeyboard)?.Clear();
 
+            Ryujinx.OpenPak.OpenPakCrashReports.CurrentTitleId = string.Empty;
+
             if (_isStopped)
             {
                 return;
@@ -927,6 +929,9 @@ namespace Ryujinx.Ava.Systems
             ApplicationLibrary.LoadAndSaveMetaData(Device.Processes.ActiveApplication.ProgramIdText,
                 appMetadata => appMetadata.UpdatePreGame()
             );
+
+            // A crash report names the game that was running.
+            Ryujinx.OpenPak.OpenPakCrashReports.CurrentTitleId = Device.Processes.ActiveApplication.ProgramIdText;
             
             _playTimer.Start();
 

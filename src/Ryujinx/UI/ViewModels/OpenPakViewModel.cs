@@ -631,13 +631,16 @@ namespace Ryujinx.Ava.UI.ViewModels
                 Task<OpenPakStatus> statusTask = OpenPakApi.Instance.StatusAsync(_cancellation.Token);
                 Task<OpenPakHealth> healthTask = OpenPakApi.Instance.HealthAsync(_cancellation.Token);
                 Task<long> edgeTask = ProbeEdgeAsync(_cancellation.Token);
+                Task<OpenPakSessionModel> natTask = NatRowAsync(_cancellation.Token);
 
-                await Task.WhenAll(statusTask, healthTask, edgeTask);
+                await Task.WhenAll(statusTask, healthTask, edgeTask, natTask);
 
                 OpenPakStatus status = statusTask.Result;
                 OpenPakHealth health = healthTask.Result;
 
                 List<OpenPakSessionModel> session = SessionRows(edgeTask.Result);
+
+                session.Add(natTask.Result);
 
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
@@ -706,6 +709,45 @@ namespace Ryujinx.Ava.UI.ViewModels
                     OnPropertyChanged(nameof(PlayersOnline));
                 });
             });
+        }
+
+        private static (DateTime At, OpenPakNatCheck.Result Result)? _nat;
+
+        /// <summary>
+        /// The console's NAT type test, run from this machine against the nncs pair the redirect
+        /// points a game at. Kept five minutes: the page refreshes every thirty seconds, and a NAT
+        /// does not change that often.
+        /// </summary>
+        private static async Task<OpenPakSessionModel> NatRowAsync(CancellationToken cancellationToken)
+        {
+            LocaleManager locale = LocaleManager.Instance;
+
+            if (OpenPakNatCheck.Targets(OpenPakNetworkProfileService.Applied) is not { } targets)
+            {
+                return new OpenPakSessionModel(locale[LocaleKeys.Dialog_OpenPak_StatusNat],
+                    locale[LocaleKeys.Dialog_OpenPak_StatusNatNoProfile], false);
+            }
+
+            if (_nat is not { } cached || DateTime.UtcNow - cached.At > TimeSpan.FromMinutes(5))
+            {
+                try
+                {
+                    _nat = cached = (DateTime.UtcNow, await OpenPakNatCheck.RunAsync(targets.Primary, targets.Secondary, cancellationToken));
+                }
+                catch (Exception exception) when (exception is SocketException or OperationCanceledException)
+                {
+                    cached = (DateTime.UtcNow, new OpenPakNatCheck.Result(OpenPakNatCheck.Mapping.Unknown, OpenPakNatCheck.Filtering.Unknown, null));
+                }
+            }
+
+            OpenPakNatCheck.Result result = cached.Result;
+
+            return new OpenPakSessionModel(locale[LocaleKeys.Dialog_OpenPak_StatusNat],
+                result.Mapping == OpenPakNatCheck.Mapping.Unknown
+                    ? locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusNatNoAnswer, targets.Primary, targets.Secondary)
+                    : locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusNatType, result.Type,
+                        result.Mapping, result.Filtering, result.External),
+                result.Type is 'A' or 'B');
         }
 
         /// <summary>
@@ -802,9 +844,11 @@ namespace Ryujinx.Ava.UI.ViewModels
                 // Said plainly rather than dressed up as a connection: a console is pushed its
                 // invitations, and this asks for them, which is why one can arrive late here.
                 new OpenPakSessionModel(locale[LocaleKeys.Dialog_OpenPak_StatusNotifications],
-                    session.Beating
-                        ? locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusNotificationsPolled, waiting)
-                        : locale[LocaleKeys.Dialog_OpenPak_StatusNotificationsOff],
+                    !session.Beating
+                        ? locale[LocaleKeys.Dialog_OpenPak_StatusNotificationsOff]
+                        : session.PushConnected
+                            ? locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusNotificationsPushed, waiting)
+                            : locale.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusNotificationsPolled, waiting),
                     session.Beating),
             ];
         }

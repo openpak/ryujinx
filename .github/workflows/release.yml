@@ -21,7 +21,7 @@ env:
 jobs:
   build:
     name: ${{ matrix.rid }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, podman]
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -69,7 +69,7 @@ jobs:
     # rcodesign, which costs a tenth of a macOS runner minute and needs no Apple identity
     # (the bundle is ad-hoc signed, as upstream's is).
     name: macos-universal
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, podman]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -80,13 +80,16 @@ jobs:
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/global.json', '**/*.csproj', '**/Directory.Packages.props') }}
-      - name: LLVM 17 and rcodesign
+      - name: LLVM lipo and rcodesign
         run: |
           set -e
-          wget -q https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && sudo ./llvm.sh 17
+          command -v llvm-lipo >/dev/null
           gh release download -R indygreg/apple-platform-rs --pattern 'apple-codesign-*-x86_64-unknown-linux-musl.tar.gz' -O rcodesign.tar.gz
           tar -xzf rcodesign.tar.gz --wildcards --strip-components=1 '*/rcodesign'
-          sudo install -m 755 rcodesign /usr/local/bin/rcodesign && rcodesign --version
+          mkdir -p "$RUNNER_TEMP/bin"
+          install -m 755 rcodesign "$RUNNER_TEMP/bin/rcodesign"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/rcodesign" --version
         env:
           GH_TOKEN: ${{ github.token }}
       - id: v
@@ -115,7 +118,7 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/openpak-v')
     needs: [build, macos]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, podman]
     steps:
       - uses: actions/download-artifact@v4
         with:

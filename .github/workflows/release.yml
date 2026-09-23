@@ -42,6 +42,8 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
+      # One at a time: the self-hosted runner is the owner's workstation (2026-09-23).
+      max-parallel: 1
       matrix:
         rid: [linux-x64, linux-arm64, win-x64]
     steps:
@@ -66,7 +68,7 @@ jobs:
         run: python3 scripts/update-openpak-compatibility.py
       - name: Publish
         run: >
-          dotnet publish src/Ryujinx -c Release -r ${{ matrix.rid }} --self-contained -o publish
+          nice -n 10 dotnet publish src/Ryujinx -c Release -r ${{ matrix.rid }} --self-contained -o publish -maxcpucount:4
           -p:Version=${{ steps.v.outputs.version }} -p:SourceRevisionId=${{ steps.v.outputs.sha }}
           -p:DebugType=embedded -p:ExtraDefineConstants=DISABLE_UPDATER
       - name: Pack
@@ -94,7 +96,8 @@ jobs:
           retention-days: 3
 
   macos:
-    needs: [prepare]
+    # After the Linux/Windows builds, never beside them.
+    needs: [prepare, build]
     if: ${{ !cancelled() && needs.prepare.result != 'failure' }}
     # Upstream's own recipe: the universal .app is assembled on Linux with LLVM's lipo and
     # rcodesign, which costs a tenth of a macOS runner minute and needs no Apple identity
@@ -136,7 +139,7 @@ jobs:
         run: python3 scripts/update-openpak-compatibility.py
       - name: Publish and bundle
         run: >
-          bash distribution/macos/create_macos_pr_build_ava.sh . publish_tmp publish ./distribution/macos/entitlements.xml
+          nice -n 10 taskset -c 0-7 bash distribution/macos/create_macos_pr_build_ava.sh . publish_tmp publish ./distribution/macos/entitlements.xml
           "${{ steps.v.outputs.version }}" "${{ steps.v.outputs.sha }}" Release "-p:ExtraDefineConstants=DISABLE_UPDATER"
       - name: Name it like the others
         run: |

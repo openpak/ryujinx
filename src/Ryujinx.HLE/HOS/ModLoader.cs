@@ -706,6 +706,10 @@ namespace Ryujinx.HLE.HOS
 
         internal bool ApplyNsoPatches(ulong applicationId, params ReadOnlySpan<IExecutable> programs)
         {
+            // OpenPak's built-in IPS patch first, while the bytes it checks are still as shipped.
+            // Independent of the user's mods, so it applies with none installed or all disabled.
+            int builtIn = OpenPakBuiltinPatches.Apply(programs);
+
             IEnumerable<Mod<DirectoryInfo>> nsoMods = _patches.NsoPatches;
 
             if (_appMods.TryGetValue(applicationId, out ModCache mods))
@@ -715,7 +719,7 @@ namespace Ryujinx.HLE.HOS
 
             // NSO patches are created with offset 0 according to Atmosphere's patcher module
             // But `Program` doesn't contain the header which is 0x100 bytes. So, we adjust for that here
-            return ApplyProgramPatches(nsoMods, 0x100, programs);
+            return ApplyProgramPatches(nsoMods, 0x100, programs) | builtIn > 0;
         }
 
         internal void LoadCheats(ulong applicationId, ProcessTamperInfo tamperInfo, TamperMachine tamperMachine)

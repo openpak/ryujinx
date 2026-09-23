@@ -45,6 +45,9 @@ namespace Ryujinx.Headless
             // Initialize Discord integration.
             DiscordIntegrationModule.Initialize();
 
+            // The last lines logged, for a crash report to carry.
+            Logger.AddTarget(Ryujinx.OpenPak.OpenPakCrashReports.Tail);
+
             // Logging system information.
             Program.PrintSystemInfo();
         }

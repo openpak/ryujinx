@@ -301,6 +301,11 @@ namespace Ryujinx.Ava.UI.ViewModels
         private readonly List<string> _openPakStartupValues = [];
         public int OpenPakStartupIndex { get; set; }
 
+        /// <summary>Crash reports: ask, always send, never; in that order, as the combo shows them.</summary>
+        private static readonly string[] _openPakCrashReportValues =
+            [Ryujinx.OpenPak.OpenPakCrashReports.Ask, Ryujinx.OpenPak.OpenPakCrashReports.Always, Ryujinx.OpenPak.OpenPakCrashReports.Never];
+        public int OpenPakCrashReportsIndex { get; set; }
+
         /// <summary>
         /// Push the addresses into the shared configuration before something in this page uses
         /// them: a sign-in from this page goes to the site in the box, not the one saved last time.
@@ -815,6 +820,7 @@ namespace Ryujinx.Ava.UI.ViewModels
 
             // A profile named here and deleted since reads as the default, which is what launch does.
             OpenPakStartupIndex = Math.Max(0, _openPakStartupValues.IndexOf(config.OpenPak.StartupProfile.Value ?? string.Empty));
+            OpenPakCrashReportsIndex = Math.Max(0, Array.IndexOf(_openPakCrashReportValues, config.OpenPak.CrashReports.Value));
 
             // Debug
             EnableGdbStub = config.Debug.EnableGdbStub.Value;
@@ -950,6 +956,7 @@ namespace Ryujinx.Ava.UI.ViewModels
             config.OpenPak.WebsiteUrl.Value = OpenPakWebsiteUrl ?? string.Empty;
             config.OpenPak.RedirectGuestDns.Value = OpenPakRedirectGuestDns;
             config.OpenPak.StartupProfile.Value = _openPakStartupValues.ElementAtOrDefault(OpenPakStartupIndex) ?? string.Empty;
+            config.OpenPak.CrashReports.Value = _openPakCrashReportValues.ElementAtOrDefault(OpenPakCrashReportsIndex) ?? Ryujinx.OpenPak.OpenPakCrashReports.Ask;
 
             // Debug
             config.Debug.EnableGdbStub.Value = EnableGdbStub;

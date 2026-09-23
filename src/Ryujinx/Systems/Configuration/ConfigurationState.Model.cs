@@ -15,6 +15,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using OpenPakConfig = Ryujinx.OpenPak.OpenPakConfig;
+using OpenPakCrashReports = Ryujinx.OpenPak.OpenPakCrashReports;
 using RyuLogger = Ryujinx.Common.Logging.Logger;
 
 namespace Ryujinx.Ava.Systems.Configuration
@@ -802,10 +803,20 @@ namespace Ryujinx.Ava.Systems.Configuration
 
             public const string StartupAsk = "ask";
 
+            /// <summary>
+            /// What to do with a crash report saved last time: "ask", "always" send, or "never"
+            /// (and then none are saved either). Nothing is ever sent without one of the first two.
+            /// </summary>
+            public ReactiveObject<string> CrashReports { get; private set; }
+
             public OpenPakSection()
             {
                 Asked = new ReactiveObject<bool>();
                 StartupProfile = new ReactiveObject<string>();
+
+                CrashReports = new ReactiveObject<string>();
+                CrashReports.LogChangesToValue(nameof(CrashReports));
+                CrashReports.Event += (_, e) => OpenPakCrashReports.Policy = e.NewValue;
 
                 Enabled = new ReactiveObject<bool>();
                 Enabled.LogChangesToValue(nameof(Enabled));

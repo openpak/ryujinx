@@ -54,6 +54,22 @@
                         ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsStartupProfileTooltip}" />
                 </StackPanel>
 
+                <StackPanel Margin="10,0,0,0" Orientation="Horizontal">
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        Width="200"
+                        Text="{ext:Locale Dialog_OpenPak_SettingsCrashReports}"
+                        ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsCrashReportsTooltip}" />
+                    <ComboBox
+                        Width="320"
+                        SelectedIndex="{Binding OpenPakCrashReportsIndex}"
+                        ToolTip.Tip="{ext:Locale Dialog_OpenPak_SettingsCrashReportsTooltip}">
+                        <ComboBoxItem Content="{ext:Locale Dialog_OpenPak_SettingsCrashReportsAsk}" />
+                        <ComboBoxItem Content="{ext:Locale Dialog_OpenPak_SettingsCrashReportsAlways}" />
+                        <ComboBoxItem Content="{ext:Locale Dialog_OpenPak_SettingsCrashReportsNever}" />
+                    </ComboBox>
+                </StackPanel>
+
                 <CheckBox Margin="10,0,0,0" IsChecked="{Binding OpenPakRedirectGuestDns}">
                     <TextBlock
                         Text="{ext:Locale Dialog_OpenPak_SettingsRedirectDns}"

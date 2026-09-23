@@ -536,6 +536,13 @@ namespace Ryujinx.Ava.UI.Windows
             // The account cache keeps friends and presence warm on its own timer once started.
             OpenPakAccount.Instance.Start();
 
+            // A crash last time left a report; it goes nowhere unless somebody says so. Not over a
+            // game a launcher is starting: those wait for the next plain launch.
+            if (interactive)
+            {
+                await Systems.OpenPak.OpenPakCrashReportOffer.RunAsync();
+            }
+
             // How far each title's online play is served is the site's to say: the list built
             // into this build is only what was true when it was made, and a title promoted since
             // would otherwise read as beta until somebody rebuilt the emulator.

@@ -951,6 +951,51 @@ namespace Ryujinx.OpenPak
             }
         }
 
+        // ---- crash reports ----
+
+        /// <summary>
+        /// Send one saved crash report. The bearer goes with it when there is one, so the site can
+        /// tell whose it is; a signed-out install reports anonymously.
+        /// </summary>
+        /// <returns>Whether the site took it.</returns>
+        public async Task<bool> SendCrashReportAsync(OpenPakCrashReports.Report report, CancellationToken cancellationToken)
+        {
+            try
+            {
+                using MultipartFormDataContent form = new();
+
+                form.Add(new StringContent(await File.ReadAllTextAsync(report.MetaPath, cancellationToken), Encoding.UTF8, "application/json"), "meta");
+
+                if (File.Exists(report.AttachmentPath) && new FileInfo(report.AttachmentPath).Length <= OpenPakCrashReports.MaxAttachmentBytes)
+                {
+                    ByteArrayContent attachment = new(await File.ReadAllBytesAsync(report.AttachmentPath, cancellationToken));
+
+                    attachment.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
+                    form.Add(attachment, "attachment", Path.GetFileName(report.AttachmentPath));
+                }
+
+                using HttpRequestMessage request = Authorised(HttpMethod.Post, $"{BaseUrl}/api/v1/crash-reports");
+
+                request.Content = form;
+
+                using HttpResponseMessage response = await Client.SendAsync(request, cancellationToken);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.Warning?.Print(LogClass.Application,
+                        $"[OpenPak] The crash report was refused: {(int)response.StatusCode} {Trim(await response.Content.ReadAsStringAsync(cancellationToken))}");
+                }
+
+                return response.IsSuccessStatusCode;
+            }
+            catch (Exception exception)
+            {
+                Logger.Warning?.Print(LogClass.Application, $"[OpenPak] Could not send the crash report: {exception.Message}");
+
+                return false;
+            }
+        }
+
         // ---- plumbing ----
 
         private HttpRequestMessage Authorised(HttpMethod method, string url)

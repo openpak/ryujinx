@@ -1,7 +1,9 @@
 using Ryujinx.Common.Logging;
 using Ryujinx.HLE.HOS.Services.Fatal.Types;
 using Ryujinx.HLE.Loaders.Processes;
+using Ryujinx.OpenPak;
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -148,6 +150,18 @@ namespace Ryujinx.HLE.HOS.Services.Fatal
             }
 
             Logger.Info?.Print(LogClass.ServiceFatal, errorReport.ToString());
+
+            // The guest has given up; the emulator has not, so this is saved for the next launch
+            // to offer rather than sent from under a running game.
+            string errorCode = $"{((int)resultCode & 0x1FF) + 2000}-{((int)resultCode >> 9) & 0x3FFF:d4}";
+
+            OpenPakCrashReports.Record(errorCode, $"Guest fatal error {errorCode}", errorReport.ToString(), process.ProgramIdText,
+                new Dictionary<string, string>
+                {
+                    ["kind"] = "guest_fatal",
+                    ["result"] = $"0x{(uint)resultCode:x8}",
+                    ["fatal_policy"] = fatalPolicy.ToString(),
+                });
 
             context.Device.System.KernelContext.Syscall.Break((ulong)resultCode);
 

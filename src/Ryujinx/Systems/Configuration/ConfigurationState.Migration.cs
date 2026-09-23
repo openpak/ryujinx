@@ -15,6 +15,7 @@ using System.IO;
 using System.Linq;
 using Key = Ryujinx.Common.Configuration.Hid.Key;
 using OpenPakConfig = Ryujinx.OpenPak.OpenPakConfig;
+using OpenPakCrashReports = Ryujinx.OpenPak.OpenPakCrashReports;
 using PhysicalKey = Ryujinx.Common.Configuration.Hid.PhysicalKey;
 using RyuLogger = Ryujinx.Common.Logging.Logger;
 
@@ -175,6 +176,8 @@ namespace Ryujinx.Ava.Systems.Configuration
             OpenPak.RedirectGuestDns.Value = cff.OpenPakRedirectGuestDns;
             OpenPak.Asked.Value = cff.OpenPakAsked;
             OpenPak.StartupProfile.Value = cff.OpenPakStartupProfile ?? string.Empty;
+            // Absent from every file written before it existed, which is the same as never answered.
+            OpenPak.CrashReports.Value = cff.OpenPakCrashReports ?? OpenPakCrashReports.Ask;
 
             Debug.EnableGdbStub.Value = shouldLoadFromFile ? cff.EnableGdbStub : Debug.EnableGdbStub.Value; // Get from global config only
             Debug.GdbStubPort.Value = shouldLoadFromFile ? cff.GdbStubPort : Debug.GdbStubPort.Value; // Get from global config only

@@ -508,6 +508,11 @@ namespace Ryujinx.Ava.Systems.Configuration
         public string OpenPakStartupProfile { get; set; }
 
         /// <summary>
+        /// What to do with a saved crash report: "ask", "always" or "never"
+        /// </summary>
+        public string OpenPakCrashReports { get; set; }
+
+        /// <summary>
         /// Uses Hypervisor over JIT if available
         /// </summary>
         public bool UseHypervisor { get; set; }

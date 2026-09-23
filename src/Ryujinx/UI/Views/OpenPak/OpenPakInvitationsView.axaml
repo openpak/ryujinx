@@ -18,20 +18,45 @@
             <Button Grid.Column="1" Name="RefreshButton" Content="{ext:Locale Dialog_OpenPak_Refresh}" MinWidth="90" IsEnabled="{Binding Ready}" />
         </Grid>
         <TextBlock Grid.Row="2" Classes="sub" Text="{ext:Locale Dialog_OpenPak_InvitationsEmpty}" IsVisible="{Binding InvitationsEmpty}" />
+        <StackPanel Grid.Row="3" IsVisible="{Binding SignedOut}" Spacing="12" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,40,0,0">
+            <TextBlock Text="{ext:Locale Dialog_OpenPak_NeedSignIn}" TextWrapping="Wrap" HorizontalAlignment="Center" />
+            <Button Classes="accent" Click="OnSignIn" Content="{ext:Locale Dialog_OpenPak_SignIn}" HorizontalAlignment="Center" MinWidth="160" />
+        </StackPanel>
 
         <ScrollViewer Grid.Row="3" HorizontalScrollBarVisibility="Disabled">
             <ItemsControl ItemsSource="{Binding Invitations}">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="viewModels:OpenPakInvitationModel">
                         <Border Classes="settings row">
-                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
-                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                    <TextBlock Classes="title" Text="{Binding TitleName}" />
-                                    <TextBlock Classes="sub" Text="{Binding From}" />
+                            <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10">
+                                <!-- The game's picture, as the game list draws it. -->
+                                <Border
+                                    Grid.Column="0"
+                                    Width="42"
+                                    Height="42"
+                                    CornerRadius="4"
+                                    ClipToBounds="True"
+                                    VerticalAlignment="Top"
+                                    Background="{DynamicResource ThemeControlBorderColor}">
+                                    <Image Source="{Binding Icon}" Stretch="UniformToFill" />
+                                </Border>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                    <TextBlock Classes="title" Text="{Binding TitleName}" TextWrapping="Wrap" />
+                                    <TextBlock Classes="sub" Text="{Binding From}" TextWrapping="Wrap" />
+                                    <!-- Their own words, quoted, when the game let them write any. -->
+                                    <Border
+                                        IsVisible="{Binding HasMessage}"
+                                        Background="{DynamicResource ThemeControlBorderColor}"
+                                        CornerRadius="4"
+                                        Padding="8,4"
+                                        Margin="0,2">
+                                        <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
+                                    </Border>
                                     <TextBlock Classes="sub" Text="{Binding Expires}" />
                                 </StackPanel>
-                                <Button Grid.Column="1" Classes="accent" Click="OnPlay" Content="{ext:Locale Dialog_OpenPak_InvitationsPlay}" />
-                                <Button Grid.Column="2" Click="OnDecline" Content="{ext:Locale Dialog_OpenPak_InvitationsDecline}" />
+                                <!-- The same two words as the prompt a running game shows. -->
+                                <Button Grid.Column="2" Classes="accent" VerticalAlignment="Center" Click="OnJoin" Content="{ext:Locale Dialog_OpenPak_InvitationsJoin}" />
+                                <Button Grid.Column="3" VerticalAlignment="Center" Click="OnIgnore" Content="{ext:Locale Dialog_OpenPak_InvitationsIgnore}" />
                             </Grid>
                         </Border>
                     </DataTemplate>

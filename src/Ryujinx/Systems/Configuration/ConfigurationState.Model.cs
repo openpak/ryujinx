@@ -809,8 +809,33 @@ namespace Ryujinx.Ava.Systems.Configuration
             /// </summary>
             public ReactiveObject<string> CrashReports { get; private set; }
 
+            /// <summary>
+            /// Pull the newest cloud save before a title starts and push it when the title exits.
+            /// </summary>
+            public ReactiveObject<bool> CloudSync { get; private set; }
+
+            /// <summary>Whether OpenPak toasts are shown at all.</summary>
+            public ReactiveObject<bool> ShowNotifications { get; private set; }
+
+            /// <summary>The corner OpenPak toasts appear in; one of the Corner constants.</summary>
+            public ReactiveObject<string> NotificationCorner { get; private set; }
+
+            public const string CornerBottomRight = "BottomRight";
+            public const string CornerBottomLeft = "BottomLeft";
+            public const string CornerTopRight = "TopRight";
+            public const string CornerTopLeft = "TopLeft";
+
             public OpenPakSection()
             {
+                CloudSync = new ReactiveObject<bool>();
+                CloudSync.LogChangesToValue(nameof(CloudSync));
+
+                ShowNotifications = new ReactiveObject<bool>();
+                ShowNotifications.LogChangesToValue(nameof(ShowNotifications));
+
+                NotificationCorner = new ReactiveObject<string>();
+                NotificationCorner.LogChangesToValue(nameof(NotificationCorner));
+
                 Asked = new ReactiveObject<bool>();
                 StartupProfile = new ReactiveObject<string>();
 

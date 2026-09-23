@@ -20,7 +20,7 @@
         </Grid>
 
         <!-- Add by friend code: the only way onto someone's list, so it is the first thing here. -->
-        <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="10" Margin="0,0,0,12">
+        <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="10" Margin="0,0,0,12" IsVisible="{Binding SignedIn}">
             <TextBox
                 Grid.Column="0"
                 Name="FriendCodeBox"
@@ -36,7 +36,11 @@
                 IsEnabled="{Binding Ready}" />
         </Grid>
 
-        <TextBlock Grid.Row="2" Classes="sub" Text="{ext:Locale Dialog_OpenPak_NeedSignIn}" IsVisible="{Binding SignedOut}" />
+        <!-- Signed out: the one thing to do, centred, as on every page that needs an account. -->
+        <StackPanel Grid.Row="3" IsVisible="{Binding SignedOut}" Spacing="12" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,40,0,0">
+            <TextBlock Text="{ext:Locale Dialog_OpenPak_NeedSignIn}" TextWrapping="Wrap" HorizontalAlignment="Center" />
+            <Button Classes="accent" Click="OnSignIn" Content="{ext:Locale Dialog_OpenPak_SignIn}" HorizontalAlignment="Center" MinWidth="160" />
+        </StackPanel>
 
         <!-- One list, not two tabs: a request nobody can see behind a tab is a request nobody
              answers, so they sit on top of the friends and take no room when there are none. -->

@@ -513,6 +513,21 @@ namespace Ryujinx.Ava.Systems.Configuration
         public string OpenPakCrashReports { get; set; }
 
         /// <summary>
+        /// Sync cloud saves when a game starts and stops; null (absent) is on
+        /// </summary>
+        public bool? OpenPakCloudSync { get; set; }
+
+        /// <summary>
+        /// Show OpenPak toasts; null (absent) is on
+        /// </summary>
+        public bool? OpenPakShowNotifications { get; set; }
+
+        /// <summary>
+        /// Which corner OpenPak toasts appear in: "BottomRight", "BottomLeft", "TopRight" or "TopLeft"
+        /// </summary>
+        public string OpenPakNotificationCorner { get; set; }
+
+        /// <summary>
         /// Uses Hypervisor over JIT if available
         /// </summary>
         public bool UseHypervisor { get; set; }

@@ -1,31 +1,31 @@
 using Avalonia.Controls;
 using Avalonia.Input.Platform;
+using Avalonia.Media;
+using Avalonia.Platform.Storage;
+using FluentAvalonia.UI.Controls;
+using Gommon;
 using Ryujinx.Ava.Common.Locale;
 using Ryujinx.Ava.UI.Helpers;
 using Ryujinx.Ava.UI.ViewModels;
-using Ryujinx.Ava.UI.Views.Dialog;
-using Ryujinx.HLE.HOS.Services.Account.OpenPak;
-using System.Threading;
+using Ryujinx.Ava.UI.Windows;
+using Ryujinx.Ava.Utilities;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace Ryujinx.Ava.UI.Views.OpenPak
 {
-    /// <summary>Who this emulator is signed in as, and the two things worth doing about it.</summary>
+    /// <summary>
+    /// Who this emulator is signed in as (UX spec §3.6, Account): the identity card with the
+    /// picture, the name and the friend code, then the details, then the console link.
+    /// </summary>
     public partial class OpenPakAccountView : UserControl
     {
         public OpenPakAccountView()
         {
             InitializeComponent();
 
-            SignInButton.Click += async (_, _) =>
-            {
-                if (await OpenPakSignInView.Show() && DataContext is OpenPakViewModel model)
-                {
-                    await model.RefreshAsync();
-                    await model.RefreshStatusAsync();
-                }
-
-                RefreshConsole();
-            };
+            // The window reloads every page when the sign-in changes; nothing more to do here.
+            SignInButton.Click += async (_, _) => await OpenPakWindow.SignInAsync();
 
             RefreshButton.Click += async (_, _) =>
             {
@@ -42,10 +42,9 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
                 {
                     await model.SignOutAsync();
                 }
-
-                RefreshConsole();
             };
 
+            // Results go to the window's status line, not a toast: the window is where somebody is looking.
             CopyCodeButton.Click += async (_, _) =>
             {
                 if (DataContext is not OpenPakViewModel model)
@@ -55,67 +54,107 @@ namespace Ryujinx.Ava.UI.Views.OpenPak
 
                 if (!RyujinxApp.IsClipboardAvailable(out IClipboard clipboard))
                 {
-                    NotificationHelper.ShowWarning(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
-                        LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_AccountCopyFailed, model.FriendCode));
+                    model.Message = LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_AccountCopyFailed, model.FriendCode);
 
                     return;
                 }
 
                 await clipboard.SetTextAsync(model.FriendCode);
 
-                NotificationHelper.ShowInformation(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
-                    LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_AccountCopied]);
+                model.Message = LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_AccountCopied];
             };
 
-            LinkConsoleButton.Click += async (_, _) =>
+            TryAgainButton.Click += async (_, _) =>
             {
-                // The device account has to exist before there is anything to attach to a person.
-                await OpenPakSession.Instance.EnsureAsync(CancellationToken.None);
-
-                if (OpenPakSession.Instance.IdToken == null)
+                if (DataContext is OpenPakViewModel model)
                 {
-                    NotificationHelper.ShowWarning(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
-                        LocaleManager.Instance[LocaleKeys.MenuBar_OpenPak_SignInFailed]);
-
-                    return;
+                    await model.RetryLinkAsync();
                 }
-
-                // The website can usually do this on its own; the link screen is for when it cannot.
-                if (await OpenPakSession.Instance.LinkFromAccountAsync(CancellationToken.None) || await OpenPakLinkView.Show())
-                {
-                    NotificationHelper.ShowSuccess(LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_Title],
-                        LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.MenuBar_OpenPak_LinkDone,
-                            OpenPakSession.Instance.Nickname));
-                }
-
-                RefreshConsole();
             };
 
-            AttachedToVisualTree += (_, _) => RefreshConsole();
+            AvatarButton.Click += async (_, _) => await ChangePictureAsync();
+            ChangeNameButton.Click += async (_, _) => await ChangeNameAsync();
         }
 
-        /// <summary>
-        /// What the emulated console's own identity looks like right now.
-        ///
-        /// Hidden entirely when no console server is configured: without one there is nothing to
-        /// link against, and an offer that cannot work is worse than no offer.
-        /// </summary>
-        private void RefreshConsole()
+        private async void OnChangePicture(object sender, Avalonia.Interactivity.RoutedEventArgs args) => await ChangePictureAsync();
+
+        private async Task ChangePictureAsync()
         {
-            OpenPakSession session = OpenPakSession.Instance;
-
-            ConsolePanel.IsVisible = session.Enabled;
-
-            if (!session.Enabled)
+            if (DataContext is not OpenPakViewModel model || TopLevel.GetTopLevel(this)?.StorageProvider is not { } storageProvider)
             {
                 return;
             }
 
-            ConsoleStatus.Text = session.IsLinked
-                ? LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.MenuBar_OpenPak_LinkedAs, session.Nickname)
-                : LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.MenuBar_OpenPak_SignedIn, session.ServerAddress);
+            Optional<IStorageFile> file = await storageProvider.OpenSingleFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_AccountChangePicture],
+                FileTypeFilter = new List<FilePickerFileType>
+                {
+                    new("PNG / JPEG")
+                    {
+                        Patterns = ["*.png", "*.jpg", "*.jpeg"],
+                        AppleUniformTypeIdentifiers = ["public.png", "public.jpeg"],
+                        MimeTypes = ["image/png", "image/jpeg"],
+                    },
+                },
+            });
 
-            LinkConsoleButton.IsVisible = !session.IsLinked;
+            if (file.HasValue)
+            {
+                await model.ChangePictureAsync(file.Value.Path.LocalPath);
+            }
+        }
+
+        private async Task ChangeNameAsync()
+        {
+            if (DataContext is not OpenPakViewModel model)
+            {
+                return;
+            }
+
+            TextBox box = new() { Text = model.DisplayName, MaxLength = 16 };
+
+            FAContentDialog dialog = new()
+            {
+                Title = LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_AccountChangeNameTitle],
+                PrimaryButtonText = LocaleManager.Instance[LocaleKeys.InputDialogOk],
+                CloseButtonText = LocaleManager.Instance[LocaleKeys.Cancel],
+                DefaultButton = FAContentDialogButton.Primary,
+                Content = new StackPanel
+                {
+                    Width = 340,
+                    Spacing = 8,
+                    Children =
+                    {
+                        box,
+                        new TextBlock
+                        {
+                            Text = LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_AccountNameRules],
+                            Opacity = 0.65,
+                            FontSize = 11,
+                            TextWrapping = TextWrapping.Wrap,
+                        },
+                    },
+                },
+            };
+
+            dialog.Opened += (_, _) =>
+            {
+                box.Focus();
+                box.SelectAll();
+            };
+
+            if (await ContentDialogHelper.ShowAsync(dialog) != FAContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            string name = box.Text?.Trim();
+
+            if (!string.IsNullOrEmpty(name) && name != model.DisplayName)
+            {
+                await model.ChangeNameAsync(name);
+            }
         }
     }
 }

@@ -3,6 +3,8 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using Ryujinx.Ava.Common.Locale;
 using Ryujinx.Ava.Systems.AppLibrary;
+using Ryujinx.Ava.Systems.OpenPak;
+using Ryujinx.Ava.UI.Views.Dialog;
 using Ryujinx.OpenPak;
 using System;
 using System.Collections.Concurrent;
@@ -40,25 +42,29 @@ namespace Ryujinx.Ava.UI.ViewModels
             // them, only the console they are actually on.
             HasTitle = friend.Online && !string.IsNullOrEmpty(friend.TitleId);
 
-            ConsoleName = OpenPakPlatforms.NameOf(friend.Namespace);
+            _namespace = friend.Namespace?.Trim().ToLowerInvariant();
+
+            ConsoleName = OpenPakUi.PlatformName(friend.Namespace);
             ConsoleText = string.IsNullOrEmpty(ConsoleName)
                 ? null
-                : LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_FriendsConsole, ConsoleName);
+                : LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_FriendsConsole, ConsoleName);
 
             SessionSinceText = friend.Since is { } since
-                ? LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_FriendsSessionSince, since.ToLocalTime())
+                ? LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_FriendsSessionSince, OpenPakUi.Time(since))
                 : null;
 
             FriendsSinceText = friend.FriendsSince is { } friendsSince
-                ? LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_FriendsFriendsSince, friendsSince.ToLocalTime())
+                ? LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_FriendsFriendsSince, OpenPakUi.Time(friendsSince))
                 : null;
 
             FriendCodeText = string.IsNullOrEmpty(FriendCode)
                 ? null
-                : LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_FriendsFriendCode, FriendCode);
+                : LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_FriendsFriendCode, FriendCode);
 
             _status = BuildStatus();
         }
+
+        private readonly string _namespace;
 
         public string AccountId { get; }
         public string DisplayName { get; }
@@ -270,35 +276,19 @@ namespace Ryujinx.Ava.UI.ViewModels
             {
                 return string.IsNullOrEmpty(TitleName)
                     ? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_FriendsPlayingUnknown]
-                    : LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_FriendsPlaying, TitleName);
+                    : LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_FriendsPlaying, TitleName);
             }
 
             // Nothing to play: on this platform that is the plain "online" the friends module
             // already means by presence 1; on another, it is the console, since there is no
             // app id to name a game with.
-            bool elsewhere = HasConsole && !string.Equals(ConsoleName, "Nintendo Switch", StringComparison.Ordinal);
+            bool elsewhere = HasConsole && _namespace != "switch";
 
             return elsewhere ? ConsoleText : LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_FriendsOnline];
         }
 
         /// <summary>The presence dot. Green reads as "there", and grey as "not", at a glance.</summary>
         public IBrush PresenceBrush => Online ? OpenPakBrushes.Up : OpenPakBrushes.Down;
-    }
-
-    /// <summary>
-    /// A presence namespace as a person reads it: the consoles OpenPak actually serves by name,
-    /// and whatever else calls itself in, capitalised rather than shown raw.
-    /// </summary>
-    internal static class OpenPakPlatforms
-    {
-        public static string NameOf(string ns) => ns?.Trim().ToLowerInvariant() switch
-        {
-            null or "" => string.Empty,
-            "switch" => "Nintendo Switch",
-            "wiiu" => "Wii U",
-            "3ds" => "Nintendo 3DS",
-            _ => char.ToUpperInvariant(ns.Trim()[0]) + ns.Trim()[1..],
-        };
     }
 
     /// <summary>A pending friend request, in whichever direction it is going.</summary>
@@ -335,30 +325,38 @@ namespace Ryujinx.Ava.UI.ViewModels
     /// <summary>An invitation waiting for this account.</summary>
     public class OpenPakInvitationModel : BaseModel
     {
-        public OpenPakInvitationModel(OpenPakInvitation invitation, string titleName)
+        public OpenPakInvitationModel(OpenPakInvitation invitation, string titleName, ApplicationData application = null)
         {
+            Invitation = invitation;
             InvitationId = invitation.InvitationId;
             TitleId = invitation.TitleId;
-            TitleName = string.IsNullOrEmpty(titleName) ? invitation.TitleId : titleName;
+            TitleName = string.IsNullOrEmpty(titleName) ? invitation.TitleId?.ToUpperInvariant() : titleName;
+            Icon = OpenPakImages.Decode(application?.Icon);
 
-            From = LocaleManager.Instance.UpdateAndGetDynamicValue(
-                LocaleKeys.Dialog_OpenPak_InvitationsFrom, invitation.From);
+            From = LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_InvitationsFrom, invitation.From);
 
-            Expires = LocaleManager.Instance.UpdateAndGetDynamicValue(
-                LocaleKeys.Dialog_OpenPak_InvitationsExpires, invitation.ExpiresAt.ToLocalTime());
+            Expires = LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_InvitationsExpires, OpenPakUi.Time(invitation.ExpiresAt));
+
+            // Their own words, in the language this install reads, when the game let them write any.
+            Message = OpenPakInvite.MessageFor(invitation.Messages);
         }
 
+        public OpenPakInvitation Invitation { get; }
         public string InvitationId { get; }
         public string TitleId { get; }
         public string TitleName { get; }
         public string From { get; }
         public string Expires { get; }
+        public string Message { get; }
+        public bool HasMessage => !string.IsNullOrEmpty(Message);
+        public Bitmap Icon { get; }
     }
 
     /// <summary>Every cloud version of one title's save, summarised.</summary>
     public class OpenPakSaveModel : BaseModel
     {
-        public OpenPakSaveModel(OpenPakSave save, ApplicationData application, string localDetail)
+        public OpenPakSaveModel(OpenPakSave save, ApplicationData application, string localDetail,
+            bool localConflict = false, bool running = false)
         {
             Save = save;
             TitleId = save.TitleId;
@@ -378,23 +376,37 @@ namespace Ryujinx.Ava.UI.ViewModels
 
             Detail = newest == null
                 ? string.Empty
-                : LocaleManager.Instance.UpdateAndGetDynamicValue(
-                    LocaleKeys.Dialog_OpenPak_SavesVersion, newest.Number) +
-                    (string.IsNullOrEmpty(newest.Device)
-                        ? string.Empty
-                        : " " + LocaleManager.Instance.UpdateAndGetDynamicValue(
-                            LocaleKeys.Dialog_OpenPak_SavesFrom, newest.Device)) +
-                    $" — {newest.CreatedAt.ToLocalTime():g}";
+                : LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_SavesLatest, newest.Number,
+                    string.IsNullOrEmpty(newest.Device) ? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_None] : newest.Device,
+                    OpenPakUi.Time(newest.CreatedAt));
 
             // Every version together, because every version is what the allowance is spent on:
             // a row showing only the newest would not add up to the figure at the top.
-            SizeText = LocaleManager.Instance.UpdateAndGetDynamicValue(
+            SizeText = LocaleManager.GetFormatted(
                 LocaleKeys.Dialog_OpenPak_SavesSize, OpenPakViewModel.Bytes(save.Size), save.Versions.Count);
 
             // A conflict is the one thing here that a person has to decide about, so it says so
-            // rather than quietly picking a side.
-            Conflict = save.Versions.Any(version => version.Conflict);
+            // rather than quietly picking a side: the server's flag, or the one a launch left
+            // here when both sides had a save.
+            Conflict = localConflict || save.Versions.Any(version => version.Conflict);
+
+            Running = running;
         }
+
+        /// <summary>This title is the one running now: its save is in use and cannot be replaced.</summary>
+        public bool Running { get; }
+
+        /// <summary>Download replaces the local save, which the running game has open.</summary>
+        public bool CanDownload => Installed && !Running;
+
+        public string DownloadTip => LocaleManager.Instance[Running
+            ? LocaleKeys.Dialog_OpenPak_CommonStopGameFirst
+            : LocaleKeys.Dialog_OpenPak_SavesDownload];
+
+        /// <summary>A conflicted row offers one button, Resolve..., instead of up and down.</summary>
+        public bool ShowTransfer => Installed && !Conflict;
+
+        public bool ShowResolve => Installed && Conflict;
 
         /// <summary>What the cloud answered with, for the calls that name versions by id.</summary>
         public OpenPakSave Save { get; }
@@ -470,15 +482,34 @@ namespace Ryujinx.Ava.UI.ViewModels
         private bool _favourite;
         private bool _installed;
 
-        public OpenPakModModel(OpenPakMod mod, bool favourite, bool installed)
+        public OpenPakModModel(OpenPakMod mod, bool favourite, bool installed, bool running = false)
         {
             Mod = mod;
             _favourite = favourite;
             _installed = installed;
 
-            Detail = LocaleManager.Instance.UpdateAndGetDynamicValue(
-                LocaleKeys.Dialog_OpenPak_ModsBy, mod.Author, mod.Licence);
+            Running = running;
+
+            Detail = LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_ModsBy, mod.Author, mod.Licence);
         }
+
+        /// <summary>The title is running: its mods are loaded, so nothing is installed under it.</summary>
+        public bool Running { get; }
+
+        public bool CanChange => !Running;
+
+        public string ChangeTip => Running ? LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_CommonStopGameFirst] : null;
+
+        /// <summary>"{name} {version}", as one line.</summary>
+        public string Heading => string.IsNullOrEmpty(Mod.Version) ? Mod.Name : $"{Mod.Name} {Mod.Version}";
+
+        /// <summary>Install, or Reinstall once it is there.</summary>
+        public string InstallText => LocaleManager.Instance[_installed
+            ? LocaleKeys.Dialog_OpenPak_ModsReinstall
+            : LocaleKeys.Dialog_OpenPak_ModsInstall];
+
+        /// <summary>The favourite toggle's glyph: its state shows without hovering.</summary>
+        public string FavouriteGlyph => _favourite ? "★" : "☆";
 
         public OpenPakMod Mod { get; }
 
@@ -496,6 +527,7 @@ namespace Ryujinx.Ava.UI.ViewModels
                 _favourite = value;
 
                 OnPropertyChanged();
+                OnPropertyChanged(nameof(FavouriteGlyph));
             }
         }
 
@@ -508,6 +540,7 @@ namespace Ryujinx.Ava.UI.ViewModels
 
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(NotInstalled));
+                OnPropertyChanged(nameof(InstallText));
             }
         }
 
@@ -520,7 +553,8 @@ namespace Ryujinx.Ava.UI.ViewModels
         public OpenPakNewsFileModel(OpenPakNewsFile file)
         {
             File = file;
-            Detail = $"{file.Size:N0} bytes";
+            // A size, not a sentence: nothing here for a translator to get wrong.
+            Detail = OpenPakViewModel.Bytes(file.Size);
         }
 
         public OpenPakNewsFile File { get; }
@@ -558,7 +592,7 @@ namespace Ryujinx.Ava.UI.ViewModels
 
             // Latency without uptime says how it is now and nothing about how it has been, which
             // is the half that tells a blip from a service that has been down all morning.
-            Detail = LocaleManager.Instance.UpdateAndGetDynamicValue(LocaleKeys.Dialog_OpenPak_StatusUptime,
+            Detail = LocaleManager.GetFormatted(LocaleKeys.Dialog_OpenPak_StatusUptime,
                 $"{service.Uptime:0.#}", service.Latency ?? string.Empty);
         }
 
@@ -582,6 +616,9 @@ namespace Ryujinx.Ava.UI.ViewModels
     {
         public string Name { get; } = name;
         public string Detail { get; } = detail;
+
+        /// <summary>The longer explanation behind <see cref="Detail"/>, on hover; null for none.</summary>
+        public string Tip { get; init; }
 
         /// <summary>Null where up and down is not the question — a presence word, a count.</summary>
         public bool? Up { get; } = up;

@@ -36,7 +36,7 @@ Upstream is `upstream` (`git.ryujinx.app`); `origin` is `openpak/ryujinx`.
 4. ~~**Getting an identity into the emulator.**~~ **Done.** Two halves, both from OpenPak and
    neither minted locally: the person signs in to the website (`POST /api/v1/token`, bearer in
    the OS password store), and the emulated console links its device account to that account
-   through the console's own QR/code screen.
+   as part of the same sign-in (a failed link shows *Try again* on the Account page).
 5. ~~**The friend graph.**~~ **Done.** `friend:u` serves the account's real list, ids, counts and
    presence from a cache kept warm on a timer. What is still honestly stubbed, and why:
    `GetFriendRequestList` (20201), because `FriendRequestImpl`'s layout is not established and
@@ -64,9 +64,12 @@ asks again (the OpenPak menu still has Sign in). Everything else happens on its 
   lost relinks on the next launch by itself;
 - a title's cloud save comes down before it starts and goes up when it exits (see below).
 
-Settings -> OpenPak keeps: the on/off toggle (off is stock Ryujinx), signed-in-as with Sign in /
-Sign out, *Account at startup*, the DNS redirect toggle, and an *Advanced* expander with the website address and a
-network refresh, for anyone running their own deployment. `OPENPAK_SERVER`, `OPENPAK_CA` and
+Settings -> OpenPak keeps, in the UX spec's order (`emulators/prds/openpak-ux-spec.md` §3.13): the
+on/off toggle (off is stock Ryujinx), "{profile} — Signed in as {name}" with *Sign in...* /
+*Sign out...*, *Open OpenPak...*, *Account at startup*, *Sync cloud saves automatically*, crash
+reports, then *Show notifications* and *Notification corner*, the DNS redirect toggle, and an
+*Advanced* expander with the website address and a network refresh (its result on a line beside
+it), for anyone running their own deployment. `OPENPAK_SERVER`, `OPENPAK_CA` and
 `OPENPAK_WEBSITE` still override everything, so the shared launchers keep working with no GUI
 in the loop.
 
@@ -103,34 +106,20 @@ One window, seven pages, in the order every OpenPak emulator build uses:
 
 | Page | What it does |
 | --- | --- |
-| Account | Who is signed in, the friend code, the Switch identity, and the console link |
+| Account | The identity card (picture and name, both changeable; friend code with Copy; Sign out...), then the friend code, the Switch identity, linked consoles, and the console link with *Try again* |
 | Friends | The list with presence, requests both ways, add by friend code, accept, decline, remove, block |
-| Invitations | What is waiting, and launching the title it is for |
-| Cloud saves | The allowance, and a title's savedata up and down (zipped; a download backs up the local copy first) |
+| Invitations | What is waiting, with *Join* (hands it to the running game, or starts the title) and *Ignore* |
+| Cloud saves | The allowance, and a title's savedata up and down (zipped; a download backs up the local copy first); a conflicted row offers *Resolve...* |
 | Mods | The title's catalogue, installed into the folder Manage Mods already reads, each package checked against its published hash |
 | News | The BCAT dataset a title would receive, and a copy of it on disk |
-| Status | Who is online, per title and per network. Public, so it still answers when sign-in is the broken part |
+| Status | The verdict, "Players online: {n}", then services, this session (with NAT type and Ping from *Test connection*), and players per title and network. Public, so it still answers when sign-in is the broken part |
 
 ## Linking
 
-The console's own link screen, shown in the emulator instead of a browser. Both halves of it,
-because a console only lacks one of them for want of a keyboard:
-
-- a **QR and a six-digit code**, for whoever would rather sign in on their phone
-- an **e-mail and password form**, for whoever is already sitting at a keyboard
-
-The server renders both — `POST /connect/1.0.0/qr/new` returns the code, the page a phone should
-open, the QR image and the time it has left — so every OpenPak client draws the same screen and
-none of them carries a QR encoder or invents its own wording. The phone path still ends with a
-person approving in the emulator, as it ends with a person approving on the console: whoever
-holds the code cannot take that step for you.
-
-A browser was tried and removed. It cannot reach these hostnames from the host in the first
-place (the DNS redirect is the guest's), and what it rendered was the television page — telling
-someone with a keyboard in front of them to go and find their phone.
-
-For the QR half to be scannable, the server's `NX_LINK_BASE_URL` has to name an address a phone
-can reach. The form half needs nothing.
+There is no separate link screen. Signing in links the emulated console in the same step (the
+website mints the token the console's link page would have), and if that part fails the Account
+page's *Console link* row says so with **Try again**. The QR/code dialog that used to be the
+fallback was removed by the UX spec (§2): it was the one place with a second way to sign in.
 
 ## Status
 
@@ -262,3 +251,25 @@ local list.
 - **NAT type:** nothing on a console but qlaunch's netdiag names a NAT type, and games run the
   nncs exchange themselves through their sockets. Status runs the same test from the host's UDP
   stack against nncs1/nncs2 and shows the letter with mapping and filtering.
+
+### UX spec pass (2026-09-23)
+
+The OpenPak UI now follows `emulators/prds/openpak-ux-spec.md`, the contract every OpenPak
+emulator shares:
+
+- **Menu:** sentence case (*Cloud saves*, *OpenPak settings...*, *OpenPak website*, *Sign out...*),
+  header *Sign in to OpenPak...*; signing in or out waits for the running game to stop; with
+  OpenPak off the header opens the settings tab; *OpenPak settings...* opens the OpenPak tab.
+- **Sign-out** asks first, the same dialog from the menu, the Account page and Settings.
+- **Cloud-save conflicts** never block a launch: the game starts on its local save, an
+  `openpak-conflict` marker beside the save pauses automatic sync for that title, and the toast or
+  *Resolve...* opens *Choose a save* (*Keep this machine's* / *Take the cloud's* / *Decide later*).
+- **Times** are absolute in the locale's short date and time everywhere (no "3 minutes ago").
+- **Toasts** have a category line, stay 6 s (hovering holds them), at most four, in the corner the
+  settings name, and a click opens what they are about; results inside the window go to its
+  status line instead.
+- **Strings:** the core's error sentences come from the locale file by the spec's keys
+  (`OpenPakText`), exception text and HTTP codes go to the log only, and the last hard-coded
+  English (the device-name template, "A friend", console names, "bytes") is in the table. The
+  shared `openpak-client/strings/en.json` does not exist yet, so `Dialog_OpenPak.json` and
+  `MenuBar_OpenPak.json` stay the carrier, holding the spec's English.

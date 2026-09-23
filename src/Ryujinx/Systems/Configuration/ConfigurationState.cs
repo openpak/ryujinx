@@ -162,6 +162,9 @@ namespace Ryujinx.Ava.Systems.Configuration
                 OpenPakAsked = OpenPak.Asked,
                 OpenPakStartupProfile = OpenPak.StartupProfile,
                 OpenPakCrashReports = OpenPak.CrashReports,
+                OpenPakCloudSync = OpenPak.CloudSync,
+                OpenPakShowNotifications = OpenPak.ShowNotifications,
+                OpenPakNotificationCorner = OpenPak.NotificationCorner,
                 EnableGdbStub = Debug.EnableGdbStub,
                 GdbStubPort = Debug.GdbStubPort,
                 DebuggerSuspendOnStart = Debug.DebuggerSuspendOnStart,
@@ -247,6 +250,9 @@ namespace Ryujinx.Ava.Systems.Configuration
             OpenPak.Asked.Value = false;
             OpenPak.StartupProfile.Value = string.Empty;
             OpenPak.CrashReports.Value = OpenPakCrashReports.Ask;
+            OpenPak.CloudSync.Value = true;
+            OpenPak.ShowNotifications.Value = true;
+            OpenPak.NotificationCorner.Value = OpenPakSection.CornerBottomRight;
             UI.GuiColumns.FavColumn.Value = true;
             UI.GuiColumns.IconColumn.Value = true;
             UI.GuiColumns.AppColumn.Value = true;

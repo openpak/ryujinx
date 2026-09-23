@@ -156,6 +156,65 @@ namespace Ryujinx.OpenPak
             return new Result(mapped, filtered, first.Address);
         }
 
+        /// <summary>
+        /// The round trip to the primary NAT check server, in milliseconds: one type-1 probe and
+        /// its answer, the best of three tries. Null when it never answered. This is the server a
+        /// game's matchmaking talks to first, so it is the latency worth showing as "Ping".
+        /// </summary>
+        public static async Task<long?> PingAsync(IPAddress primary, CancellationToken cancellationToken, int port = PrimaryPort)
+        {
+            using Socket socket = Bind();
+
+            IPEndPoint target = new(primary, port);
+            byte[] buffer = new byte[64];
+            long? best = null;
+
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                using CancellationTokenSource window = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+                window.CancelAfter(1000);
+
+                long started = System.Diagnostics.Stopwatch.GetTimestamp();
+
+                try
+                {
+                    await socket.SendToAsync(Probe(1), SocketFlags.None, target, cancellationToken);
+
+                    while (true)
+                    {
+                        SocketReceiveFromResult received;
+
+                        try
+                        {
+                            received = await socket.ReceiveFromAsync(buffer, SocketFlags.None,
+                                new IPEndPoint(IPAddress.Any, 0), window.Token);
+                        }
+                        catch (SocketException)
+                        {
+                            break;
+                        }
+
+                        if (received.ReceivedBytes >= 16 && BinaryPrimitives.ReadUInt32BigEndian(buffer) == 1 &&
+                            target.Equals(received.RemoteEndPoint))
+                        {
+                            long elapsed = (long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+
+                            best = best == null ? elapsed : Math.Min(best.Value, elapsed);
+
+                            break;
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // No answer inside this try's second; try again.
+                }
+            }
+
+            return best;
+        }
+
         private static Socket Bind()
         {
             Socket socket = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);

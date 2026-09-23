@@ -64,6 +64,12 @@ namespace Ryujinx.OpenPak
         /// <summary>Raised like <see cref="FriendCameOnline"/>, for a friend now inside a title.</summary>
         public event Action<OpenPakFriend> FriendStartedPlaying;
 
+        /// <summary>
+        /// Raised like <see cref="FriendCameOnline"/>, for someone who asked to be a friend since
+        /// the last refresh. The first refresh after signing in is the baseline and raises nothing.
+        /// </summary>
+        public event Action<OpenPakRequest> FriendRequestReceived;
+
         /// <summary>The account's own profile, or null before the first refresh.</summary>
         public OpenPakProfile Profile { get; private set; }
 
@@ -344,6 +350,7 @@ namespace Ryujinx.OpenPak
 
                 List<OpenPakFriend> cameOnline = [];
                 List<OpenPakFriend> startedPlaying = [];
+                List<OpenPakRequest> asked = [];
 
                 lock (_lock)
                 {
@@ -351,6 +358,7 @@ namespace Ryujinx.OpenPak
                     // the adapter's when it answered, and the core's otherwise. Either is a
                     // complete list; only one of them can be handed to a game.
                     IReadOnlyList<OpenPakFriend> previous = _friends;
+                    IReadOnlyList<OpenPakRequest> previousRequests = _requests;
 
                     _friends = identity is { Friends.Count: > 0 } ? identity.Friends : friends;
                     _requests = requests.Count > 0 ? requests : identity?.Requests ?? [];
@@ -365,6 +373,9 @@ namespace Ryujinx.OpenPak
                     // refresh after signing in shows the network as it already was.
                     if (_presenceBaselineTaken)
                     {
+                        asked.AddRange(_requests.Where(request => request.Incoming &&
+                            !previousRequests.Any(other => other.Incoming && other.AccountId == request.AccountId)));
+
                         foreach (OpenPakFriend friend in _friends)
                         {
                             if (!friend.Online)
@@ -402,6 +413,11 @@ namespace Ryujinx.OpenPak
                 foreach (OpenPakFriend friend in startedPlaying)
                 {
                     FriendStartedPlaying?.Invoke(friend);
+                }
+
+                foreach (OpenPakRequest request in asked)
+                {
+                    FriendRequestReceived?.Invoke(request);
                 }
             }
             catch (OperationCanceledException)

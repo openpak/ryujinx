@@ -146,6 +146,7 @@ namespace Ryujinx.OpenPak
                     _baseUrl = OpenPakConfig.WebsiteUrl;
                     _http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
                     _http.DefaultRequestHeaders.UserAgent.ParseAdd("Ryujinx-OpenPak/1.0");
+                    OpenPakClientHeader.Apply(_http);
                 }
 
                 return _http;

@@ -80,7 +80,7 @@ namespace Ryujinx.OpenPak
             ".battle.net",
         ];
 
-        private static readonly HttpClient _httpClient = new();
+        private static readonly HttpClient _httpClient = OpenPakClientHeader.Apply(new HttpClient());
         private static readonly Lock _lock = new();
 
         private static OpenPakNetworkProfile _applied;

@@ -48,6 +48,15 @@ jobs:
         rid: [linux-x64, linux-arm64, win-x64]
     steps:
       - uses: actions/checkout@v4
+      # A half-written SDK in the tool cache (the disk filled up on 2026-09-23) is reused by
+      # setup-dotnet as it is and fails at startup; one that cannot run is installed again.
+      - name: Drop a broken cached .NET SDK
+        run: |
+          d="${{ runner.tool_cache }}/dotnet"
+          if [ -x "$d/dotnet" ] && ! "$d/dotnet" --info >/dev/null 2>&1; then
+            echo "::warning::The cached .NET SDK in $d does not start; reinstalling it."
+            rm -rf "$d"
+          fi
       - uses: actions/setup-dotnet@v4
         # The self-hosted runner is not root: the default /usr/share/dotnet is not writable. The
         # tool cache persists between runs, so the SDK is installed once.
@@ -107,6 +116,15 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      # A half-written SDK in the tool cache (the disk filled up on 2026-09-23) is reused by
+      # setup-dotnet as it is and fails at startup; one that cannot run is installed again.
+      - name: Drop a broken cached .NET SDK
+        run: |
+          d="${{ runner.tool_cache }}/dotnet"
+          if [ -x "$d/dotnet" ] && ! "$d/dotnet" --info >/dev/null 2>&1; then
+            echo "::warning::The cached .NET SDK in $d does not start; reinstalling it."
+            rm -rf "$d"
+          fi
       - uses: actions/setup-dotnet@v4
         # The self-hosted runner is not root: the default /usr/share/dotnet is not writable. The
         # tool cache persists between runs, so the SDK is installed once.

@@ -1854,9 +1854,25 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30400)]
         public Result BlockUser(Uid userId, NetworkServiceAccountId friendId, int arg2)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, arg2 });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
 
-            return Result.Success;
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, arg2 });
+
+                return Result.Success;
+            }
+
+            // BlockUser names the reason itself: 1 a bad friend request, 2 a bad friend (§B.4).
+            if (arg2 is not (1 or 2))
+            {
+                return FriendResult.InvalidArgument;
+            }
+
+            return Block(friendId, arg2, null);
         }
 
         [CmifCommand(30401)]
@@ -1867,7 +1883,67 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             ApplicationInfo applicationInfo,
             [Buffer(HipcBufferFlags.In | HipcBufferFlags.Pointer, 0x48)] in InAppScreenName arg4)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, arg2, applicationInfo, arg4 });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, arg2, applicationInfo, arg4 });
+
+                return Result.Success;
+            }
+
+            (string name, string language) = OpenPakFriends.ScreenName(arg4);
+
+            // A block from inside a title is IN_APP (3) whatever the caller passed, and carries
+            // the title and the in-app name the blocked person went by there (§A.8).
+            return Block(friendId, 3, new BaasRoute(applicationInfo.ApplicationId.Id, 0,
+                applicationInfo.PresenceGroupId, null, name, language, null, null));
+        }
+
+        [CmifCommand(30403)]
+        public Result BlockUserWithApplicationInfoV2(
+            Uid userId,
+            NetworkServiceAccountId friendId,
+            int arg2,
+            ApplicationInfoV2 applicationInfo,
+            [Buffer(HipcBufferFlags.In | HipcBufferFlags.Pointer, 0x48)] in InAppScreenName arg4)
+        {
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId, arg2, arg4 });
+
+                return Result.Success;
+            }
+
+            (string name, string language) = OpenPakFriends.ScreenName(arg4);
+
+            return Block(friendId, 3, new BaasRoute(applicationInfo.ApplicationId.Id, applicationInfo.AcdIndex,
+                applicationInfo.PresenceGroupId, null, name, language, null, null));
+        }
+
+        /// <summary>
+        /// Fire and forget, as the other writes are: the POST is a network call and this is the
+        /// game's thread. The block is in the cache before this returns (a title reading the list
+        /// or the relationship straight after sees it), and the sync that follows the write
+        /// replaces it with the server's list, the friend list with it.
+        /// </summary>
+        private static Result Block(NetworkServiceAccountId friendId, int reason, BaasRoute route)
+        {
+            if (friendId.Id == 0)
+            {
+                return FriendResult.InvalidArgument;
+            }
+
+            _ = LogFailure(OpenPakBaas.BlockUserAsync(friendId.Id, reason, route, CancellationToken.None),
+                $"Blocking {friendId.Id:x16}");
 
             return Result.Success;
         }
@@ -1875,9 +1951,33 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(30402)]
         public Result UnblockUser(Uid userId, NetworkServiceAccountId friendId)
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId });
+            if (RequireManager() is { IsSuccess: false } denied)
+            {
+                return denied;
+            }
+
+            if (!OpenPakFriends.AvailableFor(userId))
+            {
+                Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { userId, friendId });
+
+                return Result.Success;
+            }
+
+            _ = LogFailure(OpenPakBaas.UnblockUserAsync(friendId.Id, CancellationToken.None),
+                $"Unblocking {friendId.Id:x16}");
 
             return Result.Success;
+        }
+
+        /// <summary>A background write's result, said out loud when it is not success.</summary>
+        private static async Task LogFailure(Task<int> write, string what)
+        {
+            int result = await write;
+
+            if (result != OpenPakBaas.Ok)
+            {
+                Logger.Warning?.Print(LogClass.ServiceFriend, $"[OpenPak] {what} failed: 2121-{result:D4}");
+            }
         }
 
         [CmifCommand(30500)]

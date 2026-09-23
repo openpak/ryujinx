@@ -47,6 +47,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
+        # The self-hosted runner is not root: the default /usr/share/dotnet is not writable. The
+        # tool cache persists between runs, so the SDK is installed once.
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.tool_cache }}/dotnet
         with:
           global-json-file: global.json
       - uses: actions/cache@v4
@@ -101,6 +105,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
+        # The self-hosted runner is not root: the default /usr/share/dotnet is not writable. The
+        # tool cache persists between runs, so the SDK is installed once.
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.tool_cache }}/dotnet
         with:
           global-json-file: global.json
       - uses: actions/cache@v4

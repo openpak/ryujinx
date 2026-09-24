@@ -18,6 +18,12 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
 
         private SystemEventType _notificationEvent;
 
+        // Signals the notification event from any host thread. OpenPak raises friend-list and
+        // request events on its background threads, where Os.SignalSystemEvent throws (the
+        // syscall context is thread-static); this action, resolved on the service thread at
+        // construction, does not.
+        private readonly Action _signalNotificationEvent;
+
         private readonly LinkedList<SizedNotificationInfo> _notifications;
 
         private bool _hasNewFriendRequest;
@@ -30,6 +36,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             _permissionLevel = permissionLevel;
             _notifications = [];
             Os.CreateSystemEvent(out _notificationEvent, EventClearMode.AutoClear, interProcess: true).AbortOnFailure();
+            HorizonStatic.Syscall.GetEventSignaller(Os.GetWritableHandleOfSystemEvent(ref _notificationEvent), out _signalNotificationEvent).AbortOnFailure();
 
             _hasNewFriendRequest = false;
             _hasFriendListUpdate = false;
@@ -124,7 +131,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
                         _notifications.AddFirst(friendListNotification);
                     }
 
-                    Os.SignalSystemEvent(ref _notificationEvent);
+                    _signalNotificationEvent();
                 }
             }
         }
@@ -151,7 +158,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
                         _hasNewFriendRequest = true;
                     }
 
-                    Os.SignalSystemEvent(ref _notificationEvent);
+                    _signalNotificationEvent();
                 }
             }
         }

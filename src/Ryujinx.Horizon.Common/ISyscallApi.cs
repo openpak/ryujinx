@@ -24,6 +24,12 @@ namespace Ryujinx.Horizon.Common
 
         Result CreateEvent(out int writableHandle, out int readableHandle);
         Result SignalEvent(int handle);
+        /// <summary>
+        /// Resolves a writable event handle of the calling process to an action that signals it
+        /// from any host thread. SignalEvent needs the kernel's thread-static context, which only
+        /// a guest or service thread carries; the action does not.
+        /// </summary>
+        Result GetEventSignaller(int writableHandle, out Action signal);
         Result ClearEvent(int handle);
         Result ResetSignal(int handle);
 

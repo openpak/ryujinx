@@ -16,7 +16,7 @@ using System.Threading;
 namespace Ryujinx.HLE.HOS.Kernel.SupervisorCall
 {
     [SvcImpl]
-    class Syscall : ISyscallApi
+    partial class Syscall : ISyscallApi
     {
         private readonly KernelContext _context;
 

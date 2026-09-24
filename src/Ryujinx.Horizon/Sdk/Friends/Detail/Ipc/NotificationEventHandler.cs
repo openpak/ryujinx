@@ -70,12 +70,9 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
                 handlers = [.. _handlers];
             }
 
-            // The callers are OpenPak's background threads, and signalling a guest event needs the
-            // kernel's thread-static context, which only a guest or service thread carries. The
-            // notification is still queued before the signal throws, so the guest sees it on its
-            // next Pop; the throw itself used to end OpenPak's heartbeat, presence with it.
-            // ponytail: the event stays unsignalled off-thread; marshal the signal onto the
-            // friends service thread if a guest ever waits on it and misses an update.
+            // The callers are OpenPak's background threads. NotificationService signals its event
+            // through a kernel-resolved action that works off-thread; the catch remains so that
+            // a failure in one handler can never end the heartbeat, and presence with it.
             foreach (NotificationEventHandler handler in handlers)
             {
                 try
@@ -84,7 +81,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
                 }
                 catch (Exception exception)
                 {
-                    Logger.Debug?.Print(LogClass.ServiceFriend, $"Friends notification not signalled off the service thread: {exception.Message}");
+                    Logger.Debug?.Print(LogClass.ServiceFriend, $"Friends notification not signalled: {exception.Message}");
                 }
             }
         }

@@ -523,19 +523,41 @@ namespace Ryujinx.OpenPak
                 {
                     foreach (JsonElement title in titles.EnumerateArray())
                     {
-                        string id = String(title, "title_id");
                         string name = String(title, "name");
-
-                        if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(name))
-                        {
-                            _catalogueNames[id] = name;
-                        }
-
                         string status = String(title, "status");
 
-                        if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(status))
+                        // A title is one catalogue row but several title ids (one per region);
+                        // every id gets the row's name and status, or a European copy shows no
+                        // online label while the American one does.
+                        List<string> ids = new() { String(title, "title_id") };
+
+                        if (title.TryGetProperty("title_ids", out JsonElement titleIds) && titleIds.ValueKind == JsonValueKind.Array)
                         {
-                            _catalogueStatuses[id.ToLowerInvariant()] = status.ToLowerInvariant();
+                            foreach (JsonElement extra in titleIds.EnumerateArray())
+                            {
+                                if (extra.ValueKind == JsonValueKind.String)
+                                {
+                                    ids.Add(extra.GetString());
+                                }
+                            }
+                        }
+
+                        foreach (string id in ids)
+                        {
+                            if (string.IsNullOrEmpty(id))
+                            {
+                                continue;
+                            }
+
+                            if (!string.IsNullOrEmpty(name))
+                            {
+                                _catalogueNames[id] = name;
+                            }
+
+                            if (!string.IsNullOrEmpty(status))
+                            {
+                                _catalogueStatuses[id.ToLowerInvariant()] = status.ToLowerInvariant();
+                            }
                         }
                     }
 

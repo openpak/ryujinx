@@ -499,8 +499,24 @@ namespace Ryujinx.Ava.UI.Windows
                         // A profile that cannot be fetched is a log line inside RefreshAsync and
                         // a game that starts anyway.
                     }
+
+                    // Re-check ceiling and profile every six hours and after a sign-in; the set
+                    // just applied is the one in use until a game starts on a newer one.
+                    OpenPakNetworkProfileService.StartWatching();
                 });
             }
+
+            // Redirects are written into the console when it starts, so a set that changed under a
+            // running game is only in use after a restart: one quiet toast per new set, and none
+            // when nothing is running, because the next game starts on the new set anyway.
+            OpenPakNetworkProfileService.RedirectsChanged += () => Dispatcher.UIThread.Post(() =>
+            {
+                if (ViewModel.IsGameRunning)
+                {
+                    OpenPakToast.Show(OpenPakToast.Category.OpenPak,
+                        LocaleManager.Instance[LocaleKeys.Dialog_OpenPak_NotificationRedirectsChanged]);
+                }
+            });
         }
 
         private Task _networkProfileRefresh = Task.CompletedTask;

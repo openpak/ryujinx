@@ -2,6 +2,7 @@ using Ryujinx.Common.Logging;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
@@ -57,9 +58,9 @@ namespace Ryujinx.OpenPak
         public const string Platform = "switch";
 
         /// <summary>
-        /// The ceiling, compiled in and never read from the network: the profile chooses within
-        /// these families and anything outside them is dropped and logged. This is the whole
-        /// security model of taking a redirect map from the network; do not weaken it.
+        /// The first-boot fallback ceiling, used only while no signed ceiling has ever been
+        /// verified and cached (<see cref="OpenPakCeilingService"/>). It is frozen: a new family is
+        /// added to the signed ceiling on the server, never here again.
         /// </summary>
         public static readonly string[] AllowedFamilies =
         [
@@ -80,10 +81,52 @@ namespace Ryujinx.OpenPak
             ".battle.net",
         ];
 
+        /// <summary>
+        /// What the console redirects when there is no profile at all: the families written as
+        /// wildcards, to the console server's address.
+        /// </summary>
+        public static readonly string[] BuiltInFamilies =
+        [
+            ".nintendo.net",
+            ".nintendo.com",
+            ".nintendo.co.jp",
+            ".nintendowifi.net",
+            ".nintendo-europe.com",
+        ];
+
+        /// <summary>
+        /// Names with an address of their own, compiled in as the same kind of fallback the
+        /// wildcard list is: true until a network profile says otherwise. The NAT check is why
+        /// this exists — it compares what two addresses observe of one console, so its second
+        /// probe must not collapse onto the first address the way the wildcard would collapse it.
+        /// </summary>
+        public static readonly IReadOnlyDictionary<string, string> BuiltInOverrides = new Dictionary<string, string>
+        {
+            ["nncs2-lp1.n.n.srv.nintendo.net"] = "145.241.228.207",
+        };
+
+        /// <summary>
+        /// Raised when a re-check finds an effective redirect set that differs from the one the
+        /// running console was started with, once per new set. Raised off the UI thread.
+        /// </summary>
+        public static event Action RedirectsChanged;
+
         private static readonly HttpClient _httpClient = OpenPakClientHeader.Apply(new HttpClient());
         private static readonly Lock _lock = new();
+        private static readonly SemaphoreSlim _refreshGate = new(1, 1);
 
         private static OpenPakNetworkProfile _applied;
+
+        private static string _inUseDigest;
+        private static string _announcedDigest;
+        private static int _watching;
+
+        /// <summary>
+        /// This platform's families: the verified signed ceiling when one has ever been accepted,
+        /// the compiled-in fallback otherwise.
+        /// </summary>
+        public static IReadOnlyList<string> CeilingFamilies
+            => OpenPakCeilingService.Current?.Families(Platform) ?? AllowedFamilies;
 
         private static string StorePath => Path.Combine(OpenPakConfig.DataDirectory, "network-profile.json");
 
@@ -107,8 +150,157 @@ namespace Ryujinx.OpenPak
         /// one, and anything else — no network, a bad profile, a server that moved — keeps the
         /// stored one or falls back to the built-in list. Never blocks a launch, never retries.
         /// Returns the source the applied profile came from: fetched, cached, or built-in.
+        ///
+        /// The signed ceiling is refreshed first, because it decides which of the profile's names
+        /// survive; then, when watching, the new effective set is compared with the one in use.
         /// </summary>
         public static async Task<string> RefreshAsync(CancellationToken cancellationToken)
+        {
+            await _refreshGate.WaitAsync(cancellationToken);
+
+            try
+            {
+                await OpenPakCeilingService.RefreshAsync(cancellationToken);
+
+                string source = await RefreshProfileAsync(cancellationToken);
+
+                CheckForChange();
+
+                return source;
+            }
+            finally
+            {
+                _refreshGate.Release();
+            }
+        }
+
+        /// <summary>
+        /// Start the background re-check: every 6 hours (±10 %) and after an OpenPak sign-in.
+        /// Called once, after the boot refresh; the effective set at that point is the one in use
+        /// unless a game already started on an older one.
+        /// </summary>
+        public static void StartWatching()
+        {
+            if (Interlocked.Exchange(ref _watching, 1) == 1)
+            {
+                return;
+            }
+
+            lock (_lock)
+            {
+                _inUseDigest ??= EffectiveDigest(_applied);
+            }
+
+            // A game started before the boot refresh landed runs on the older set.
+            CheckForChange();
+
+            OpenPakApi.Instance.SignedInChanged += () => _ = Task.Run(async () =>
+            {
+                if (OpenPakApi.Instance.SignedIn)
+                {
+                    await RecheckAsync();
+                }
+            });
+
+            _ = Task.Run(async () =>
+            {
+                while (true)
+                {
+                    await Task.Delay(TimeSpan.FromHours(6 * (0.9 + 0.2 * Random.Shared.NextDouble())));
+
+                    await RecheckAsync();
+                }
+            });
+        }
+
+        /// <summary>
+        /// The console has just been given the current set (the hosts file was written as a game
+        /// started), so that set is now the one in use.
+        /// </summary>
+        public static void MarkInUse()
+        {
+            lock (_lock)
+            {
+                _inUseDigest = EffectiveDigest(_applied);
+            }
+        }
+
+        private static async Task RecheckAsync()
+        {
+            if (!OpenPakConfig.Enabled)
+            {
+                return;
+            }
+
+            try
+            {
+                await RefreshAsync(CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                Logger.Warning?.Print(LogClass.Application, $"[OpenPak] Network re-check failed: {exception.Message}");
+            }
+        }
+
+        private static void CheckForChange()
+        {
+            if (Volatile.Read(ref _watching) == 0 || !OpenPakConfig.Enabled || !OpenPakConfig.RedirectGuestDns)
+            {
+                return;
+            }
+
+            string previous;
+            string digest;
+
+            lock (_lock)
+            {
+                digest = EffectiveDigest(_applied);
+
+                if (_inUseDigest == null || digest == _inUseDigest || digest == _announcedDigest)
+                {
+                    return;
+                }
+
+                previous = _inUseDigest;
+                _announcedDigest = digest;
+            }
+
+            Logger.Info?.Print(LogClass.Application,
+                $"[OpenPak] The effective network redirects changed ({previous[..12]} -> {digest[..12]}); they apply when the game restarts");
+
+            RedirectsChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// SHA-256 (lower-case hex) of this platform's effective redirect set after filtering: the
+        /// sorted <c>family:</c>, <c>exact:</c>, <c>override:name=ip</c> and <c>address:ip</c>
+        /// entries. Only this platform's profile goes in, so another platform's list never moves it.
+        /// </summary>
+        public static string EffectiveDigest(OpenPakNetworkProfile profile)
+        {
+            List<string> entries = [];
+
+            if (profile != null)
+            {
+                entries.AddRange(profile.Suffixes.Select(suffix => "family:" + suffix));
+                entries.AddRange(profile.Exact.Select(name => "exact:" + name));
+                entries.AddRange(profile.Overrides.Select(entry => $"override:{entry.Key}={entry.Value}"));
+                entries.Add("address:" + profile.ServerAddress);
+            }
+            else
+            {
+                // The built-in list's address is the console server, resolved when written.
+                entries.AddRange(BuiltInFamilies.Select(family => "family:" + family));
+                entries.AddRange(BuiltInOverrides.Select(entry => $"override:{entry.Key}={entry.Value}"));
+                entries.Add("address:" + OpenPakConfig.ResolvedConsoleServer);
+            }
+
+            entries.Sort(StringComparer.Ordinal);
+
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', entries)))).ToLowerInvariant();
+        }
+
+        private static async Task<string> RefreshProfileAsync(CancellationToken cancellationToken)
         {
             (OpenPakNetworkProfile stored, string storedEtag) = LoadStored();
 
@@ -191,6 +383,23 @@ namespace Ryujinx.OpenPak
         /// <summary>Parse and check a profile against everything in the security model.</summary>
         private static async Task<OpenPakNetworkProfile> ValidateAsync(string body, CancellationToken cancellationToken)
         {
+            OpenPakNetworkProfile profile = Parse(body, CeilingFamilies);
+
+            if (profile == null || !await TrustCertificateAuthorityAsync(profile, cancellationToken))
+            {
+                return null;
+            }
+
+            return profile;
+        }
+
+        /// <summary>
+        /// Parse a profile and filter it through <paramref name="ceiling"/>. A name outside the
+        /// ceiling is dropped on its own and logged — never the whole profile, which is what once
+        /// made one new family cost every redirect. A malformed profile is still rejected whole.
+        /// </summary>
+        public static OpenPakNetworkProfile Parse(string body, IReadOnlyList<string> ceiling)
+        {
             try
             {
                 using JsonDocument document = JsonDocument.Parse(body);
@@ -216,10 +425,10 @@ namespace Ryujinx.OpenPak
                 }
 
                 JsonElement redirect = root.GetProperty("redirect");
-                List<string> suffixes = Names(redirect, "suffixes", version, allowBareHost: false);
-                List<string> exact = Names(redirect, "exact", version, allowBareHost: true);
-                List<string> never = Names(redirect, "never", version, allowBareHost: true);
-                Dictionary<string, string> overrides = Addresses(redirect, version);
+                List<string> suffixes = Names(redirect, "suffixes", version, ceiling, allowBareHost: false);
+                List<string> exact = Names(redirect, "exact", version, ceiling, allowBareHost: true);
+                List<string> never = Names(redirect, "never", version, ceiling, allowBareHost: true);
+                Dictionary<string, string> overrides = Addresses(redirect, version, ceiling);
 
                 if (suffixes == null || exact == null || never == null || overrides == null)
                 {
@@ -254,11 +463,6 @@ namespace Ryujinx.OpenPak
                     CaUrl = caUrl,
                     CaSha256 = caSha256,
                 };
-
-                if (!await TrustCertificateAuthorityAsync(profile, cancellationToken))
-                {
-                    return null;
-                }
 
                 return profile;
             }
@@ -325,8 +529,11 @@ namespace Ryujinx.OpenPak
             }
         }
 
-        /// <summary>One family from the redirect object, every name inside the compiled-in ceiling.</summary>
-        private static List<string> Names(JsonElement redirect, string property, long version, bool allowBareHost)
+        /// <summary>
+        /// One list from the redirect object, filtered through the ceiling. A name outside it is
+        /// dropped and logged on its own; the rest of the profile stands.
+        /// </summary>
+        private static List<string> Names(JsonElement redirect, string property, long version, IReadOnlyList<string> ceiling, bool allowBareHost)
         {
             List<string> names = [];
 
@@ -345,22 +552,20 @@ namespace Ryujinx.OpenPak
                     return null;
                 }
 
-                if (!InsideAllowedFamilies(entry))
-                {
-                    // Dropped and logged, the whole profile with it: narrowing the ceiling is
-                    // exactly what the compiled-in list exists to prevent.
-                    Logger.Warning?.Print(LogClass.Application,
-                        $"[OpenPak] Network profile {version} rejected: '{entry}' is outside every family this build ships with");
-
-                    return null;
-                }
-
                 if (!allowBareHost && !entry.StartsWith('.'))
                 {
                     Logger.Warning?.Print(LogClass.Application,
                         $"[OpenPak] Network profile {version} rejected: '{entry}' in '{property}' is not a suffix");
 
                     return null;
+                }
+
+                if (!OpenPakCeilingService.Covers(ceiling, entry))
+                {
+                    Logger.Warning?.Print(LogClass.Application,
+                        $"[OpenPak] Network profile {version}: dropped '{entry}' from '{property}', it is outside the redirect ceiling");
+
+                    continue;
                 }
 
                 names.Add(entry.ToLowerInvariant());
@@ -372,11 +577,11 @@ namespace Ryujinx.OpenPak
         /// <summary>
         /// Names with an address of their own. The NAT check is the reason: it compares what two
         /// addresses observe of the same console, and one address cannot observe a difference
-        /// against itself. Every name sits inside the compiled-in families and every address
-        /// passes the same literal-public-IPv4 test as the server's own, or the profile is
-        /// rejected whole.
+        /// against itself. A name outside the ceiling is dropped and logged on its own, the same
+        /// as any other profile name; an address that fails the literal-public-IPv4 test the
+        /// server's own passes still rejects the profile whole.
         /// </summary>
-        private static Dictionary<string, string> Addresses(JsonElement redirect, long version)
+        private static Dictionary<string, string> Addresses(JsonElement redirect, long version, IReadOnlyList<string> ceiling)
         {
             Dictionary<string, string> overrides = [];
 
@@ -387,11 +592,10 @@ namespace Ryujinx.OpenPak
 
             foreach (JsonProperty entry in map.EnumerateObject())
             {
-                if (entry.Value.ValueKind != JsonValueKind.String ||
-                    !InsideAllowedFamilies(entry.Name))
+                if (entry.Value.ValueKind != JsonValueKind.String || entry.Name.Length < 2)
                 {
                     Logger.Warning?.Print(LogClass.Application,
-                        $"[OpenPak] Network profile {version} rejected: the override '{entry.Name}' is not a name inside the compiled-in families");
+                        $"[OpenPak] Network profile {version} rejected: the override '{entry.Name}' is not a name with an address");
 
                     return null;
                 }
@@ -409,23 +613,18 @@ namespace Ryujinx.OpenPak
                     return null;
                 }
 
+                if (!OpenPakCeilingService.Covers(ceiling, entry.Name))
+                {
+                    Logger.Warning?.Print(LogClass.Application,
+                        $"[OpenPak] Network profile {version}: dropped the override for '{entry.Name}', it is outside the redirect ceiling");
+
+                    continue;
+                }
+
                 overrides[entry.Name.ToLowerInvariant()] = parsed.ToString();
             }
 
             return overrides;
-        }
-
-        private static bool InsideAllowedFamilies(string name)
-        {
-            foreach (string family in AllowedFamilies)
-            {
-                if (name.EndsWith(family, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         /// <summary>Make it live. Callers are the fetch, a stored profile re-read, and nobody else.</summary>

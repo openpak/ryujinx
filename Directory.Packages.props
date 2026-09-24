@@ -82,6 +82,8 @@
     <PackageVersion Include="SPB" Version="0.0.4-build32" />
     
     <!-- External Dependencies -->
+    <!-- Ed25519 verification of OpenPak's signed redirect ceiling; the BCL has no Ed25519. MIT. -->
+    <PackageVersion Include="BouncyCastle.Cryptography" Version="2.7.0" />
     <PackageVersion Include="Concentus" Version="2.2.2" />
     <PackageVersion Include="DiscordRichPresence" Version="1.6.1.70" />
     

@@ -30,30 +30,6 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         private const string End = "# <<< OpenPak (managed by Ryujinx) <<<";
 
         /// <summary>
-        /// The names a console asks for that OpenPak answers to. Wildcards, because a title
-        /// reaches a per-title hostname under one of these and enumerating them is a losing game.
-        /// </summary>
-        private static readonly string[] _names =
-        [
-            "*.nintendo.net",
-            "*.nintendo.com",
-            "*.nintendo.co.jp",
-            "*.nintendowifi.net",
-            "*.nintendo-europe.com",
-        ];
-
-        /// <summary>
-        /// Names with an address of their own, compiled in as the same kind of fallback the
-        /// wildcard list is: true until a network profile says otherwise. The NAT check is why
-        /// this exists — it compares what two addresses observe of one console, so its second
-        /// probe must not collapse onto the first address the way the wildcard would collapse it.
-        /// </summary>
-        private static readonly Dictionary<string, string> _nameOverrides = new()
-        {
-            ["nncs2-lp1.n.n.srv.nintendo.net"] = "145.241.228.207",
-        };
-
-        /// <summary>
         /// Put the OpenPak block in the console's hosts file, or take it out again.
         ///
         /// Called before a game starts, so a toggle in the settings window is in effect the next
@@ -113,14 +89,16 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                     {
                         address = Address();
 
-                        foreach ((string name, string nameAddress) in _nameOverrides)
+                        // The built-in names live beside the profile they stand in for, so the
+                        // change notice can digest them the same way.
+                        foreach ((string name, string nameAddress) in OpenPakNetworkProfileService.BuiltInOverrides)
                         {
                             entries.Add((nameAddress, name));
                         }
 
-                        foreach (string name in _names)
+                        foreach (string family in OpenPakNetworkProfileService.BuiltInFamilies)
                         {
-                            entries.Add((address, name));
+                            entries.Add((address, "*" + family));
                         }
                     }
                 }
@@ -161,6 +139,10 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
 
                 File.WriteAllLines(path, lines);
+
+                // What the console now resolves is the set in use: a later change to it is what
+                // the "restart the game" notice is about.
+                OpenPakNetworkProfileService.MarkInUse();
 
                 Logger.Info?.Print(LogClass.ServiceBsd, wanted
                     ? $"[OpenPak] The emulated console resolves {entries.Count} name(s) to {address} " +

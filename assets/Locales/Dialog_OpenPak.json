@@ -6524,6 +6524,31 @@
         "zh_CN": "",
         "zh_TW": ""
       }
+    },
+    {
+      "ID": "NotificationRedirectsChanged",
+      "Translations": {
+        "ar_SA": "",
+        "de_DE": "",
+        "el_GR": "",
+        "en_US": "OpenPak updated this system's network redirects. Restart the game (or the emulator) to use them.",
+        "es_ES": "",
+        "fr_FR": "",
+        "he_IL": "",
+        "it_IT": "",
+        "ja_JP": "",
+        "ko_KR": "",
+        "no_NO": "",
+        "pl_PL": "",
+        "pt_BR": "",
+        "ru_RU": "",
+        "sv_SE": "",
+        "th_TH": "",
+        "tr_TR": "",
+        "uk_UA": "",
+        "zh_CN": "",
+        "zh_TW": ""
+      }
     }
   ]
 }

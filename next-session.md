@@ -1,11 +1,19 @@
 # Next session — ryujinx
 
-Updated 2026-09-16.
+Updated 2026-09-24.
 
 Upstream Ryujinx (MIT) plus a C# OpenPak client: console-chain sign-in and linking, the
-friend graph, invitations, cloud saves, mods, news, status (OPENPAK.md). Released at
-`openpak-v0.1.0`; the five commits since — sign-in at launch, the Pia deferred-poll fix, and
-the Diablo II: Resurrected / Battle.net groundwork — are untagged.
+friend graph, invitations, cloud saves, mods, news, status (OPENPAK.md). Latest tag `v0.2.2`
+(2026-09-24); tags moved from `openpak-v0.1.x` (last `openpak-v0.1.5`) to `v*.*.*` on 09-23,
+and CI builds only on those tags. The Switch reference for Citron and Eden (emulators/prds
+§2a).
+
+Current status 2026-09-24: `v0.2.2`. Landed since 09-16: zero-setup sign-in, one account per
+profile, friends against the 22.5.0 firmware contract (requests, blocks, invitation list and
+detail, presence), BCAT delivery (a909bfd3b), the NAT type test against nncs (2c418dc17),
+Penne push hold, crash reports, UI to the OpenPak UX spec, the signed redirect ceiling
+(403aab3a5), the CTR Demonware key IPS, compatibility list from the site catalogue, Bsd
+select/poll and P2P tap fixes, Npns for ACNH, LibHac vendored.
 
 ## Where things stand
 
@@ -23,11 +31,9 @@ the Diablo II: Resurrected / Battle.net groundwork — are untagged.
   only, cloud saves on launch/exit). Untested against a live account from a fresh config —
   do that first: delete `openpak/` and the config, launch, sign in, start a title, check the
   hosts block, the 1033 cert, and the save toast on exit.
-- Cut `openpak-v0.1.1` (local Linux build first — PRD rule).
-- Native invitation *list* into the guest (22000/22001) needs the `FriendInvitationForViewerImpl`
-  / `FriendInvitationGroupImpl` layouts — not on switchbrew; a friends-NSO capture or a title
-  that reads them is the way in. The count and mark-read are done.
-- Still blocking titles: NAT check (`nncs1`/`nncs2`, UDP), native News delivery (`bcat:*`).
+- Next release is a `v*.*.*` tag (local Linux build first — PRD rule).
+- NAT check and BCAT delivery landed 09-23; verify both per title before calling them done.
+- Every change here is ported to Citron and Eden through `openpak-client` (PRD §2a).
 - D2R: follow the game-server stage in servers/diablo-ii-resurrected/next-session.md — fork
   changes only as the gateway experiments demand.
 

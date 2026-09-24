@@ -3,8 +3,8 @@ name: release
 # The OpenPak build of Ryujinx. A vX.Y.Z tag publishes the four desktop targets
 # (Linux x64 and arm64, Windows x64, macOS universal) on a GitHub Release, each build attaching
 # its own files; a manual dispatch builds workflow artifacts alone. Plain pushes to
-# master do not build: the single self-hosted runner would spend most of an hour on every
-# commit and block every other repo's deploy behind it. Upstream's Forgejo workflows stay
+# master and pull requests do not build. The repository is public, so every job runs on a
+# GitHub-hosted runner, never a self-hosted one. Upstream's Forgejo workflows stay
 # untouched in .forgejo/ for merging; this one is ours.
 on:
   push:
@@ -24,14 +24,8 @@ jobs:
   # stopped every release (2026-09-23).
   prepare:
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: [self-hosted, linux, podman, heavy]
+    runs-on: ubuntu-24.04
     steps:
-      - name: Scratch in the runner's temp, not the machine's shared /tmp
-        # /tmp is a RAM disk every build on the machine shares; when it filled on
-        # 2026-09-24 a compiler died and a job hung for hours instead of failing.
-        run: |
-          mkdir -p "$RUNNER_TEMP/scratch"
-          echo "TMPDIR=$RUNNER_TEMP/scratch" >> "$GITHUB_ENV"
       - env:
           GH_TOKEN: ${{ github.token }}
         run: >
@@ -39,44 +33,20 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag
           --title "Ryujinx (OpenPak) $GITHUB_REF_NAME"
           --notes "Upstream Ryujinx with the OpenPak network layer. Set OPENPAK_SERVER and drop the CA in the data directory; see OPENPAK.md."
-      - name: Clear scratch
-        if: always()
-        run: rm -rf "$RUNNER_TEMP/scratch"
 
   build:
     name: ${{ matrix.rid }}
     needs: [prepare]
     if: ${{ !cancelled() && needs.prepare.result != 'failure' }}
-    runs-on: [self-hosted, linux, podman, heavy]
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      # One at a time: the self-hosted runner is the owner's workstation (2026-09-23).
-      max-parallel: 1
       matrix:
         rid: [linux-x64, linux-arm64, win-x64]
     steps:
       - uses: actions/checkout@v4
-      - name: Scratch in the runner's temp, not the machine's shared /tmp
-        # /tmp is a RAM disk every build on the machine shares; when it filled on
-        # 2026-09-24 a compiler died and a job hung for hours instead of failing.
-        run: |
-          mkdir -p "$RUNNER_TEMP/scratch"
-          echo "TMPDIR=$RUNNER_TEMP/scratch" >> "$GITHUB_ENV"
-      # A half-written SDK in the tool cache (the disk filled up on 2026-09-23) is reused by
-      # setup-dotnet as it is and fails at startup; one that cannot run is installed again.
-      - name: Drop a broken cached .NET SDK
-        run: |
-          d="${{ runner.tool_cache }}/dotnet"
-          if [ -x "$d/dotnet" ] && ! "$d/dotnet" --info >/dev/null 2>&1; then
-            echo "::warning::The cached .NET SDK in $d does not start; reinstalling it."
-            rm -rf "$d"
-          fi
       - uses: actions/setup-dotnet@v4
-        # The self-hosted runner is not root: the default /usr/share/dotnet is not writable. The
-        # tool cache persists between runs, so the SDK is installed once.
-        env:
-          DOTNET_INSTALL_DIR: ${{ runner.tool_cache }}/dotnet
         with:
           global-json-file: global.json
       - uses: actions/cache@v4
@@ -92,7 +62,7 @@ jobs:
         run: python3 scripts/update-openpak-compatibility.py
       - name: Publish
         run: >
-          nice -n 10 dotnet publish src/Ryujinx -c Release -r ${{ matrix.rid }} --self-contained -o publish -maxcpucount:4
+          dotnet publish src/Ryujinx -c Release -r ${{ matrix.rid }} --self-contained -o publish
           -p:Version=${{ steps.v.outputs.version }} -p:SourceRevisionId=${{ steps.v.outputs.sha }}
           -p:DebugType=embedded -p:ExtraDefineConstants=DISABLE_UPDATER
       - name: Pack
@@ -118,42 +88,19 @@ jobs:
           path: ryujinx-openpak-*
           if-no-files-found: error
           retention-days: 3
-      - name: Clear scratch
-        if: always()
-        run: rm -rf "$RUNNER_TEMP/scratch"
 
   macos:
-    # After the Linux/Windows builds, never beside them.
-    needs: [prepare, build]
+    needs: [prepare]
     if: ${{ !cancelled() && needs.prepare.result != 'failure' }}
     # Upstream's own recipe: the universal .app is assembled on Linux with LLVM's lipo and
-    # rcodesign, which costs a tenth of a macOS runner minute and needs no Apple identity
+    # rcodesign, which needs neither a macOS runner nor an Apple identity
     # (the bundle is ad-hoc signed, as upstream's is).
     name: macos-universal
-    runs-on: [self-hosted, linux, podman, heavy]
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - name: Scratch in the runner's temp, not the machine's shared /tmp
-        # /tmp is a RAM disk every build on the machine shares; when it filled on
-        # 2026-09-24 a compiler died and a job hung for hours instead of failing.
-        run: |
-          mkdir -p "$RUNNER_TEMP/scratch"
-          echo "TMPDIR=$RUNNER_TEMP/scratch" >> "$GITHUB_ENV"
-      # A half-written SDK in the tool cache (the disk filled up on 2026-09-23) is reused by
-      # setup-dotnet as it is and fails at startup; one that cannot run is installed again.
-      - name: Drop a broken cached .NET SDK
-        run: |
-          d="${{ runner.tool_cache }}/dotnet"
-          if [ -x "$d/dotnet" ] && ! "$d/dotnet" --info >/dev/null 2>&1; then
-            echo "::warning::The cached .NET SDK in $d does not start; reinstalling it."
-            rm -rf "$d"
-          fi
       - uses: actions/setup-dotnet@v4
-        # The self-hosted runner is not root: the default /usr/share/dotnet is not writable. The
-        # tool cache persists between runs, so the SDK is installed once.
-        env:
-          DOTNET_INSTALL_DIR: ${{ runner.tool_cache }}/dotnet
         with:
           global-json-file: global.json
       - uses: actions/cache@v4
@@ -161,9 +108,13 @@ jobs:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/global.json', '**/*.csproj', '**/Directory.Packages.props') }}
       - name: LLVM lipo and rcodesign
+        # The bundle scripts want llvm-lipo, llvm-otool and llvm-install-name-tool; LLVM's own
+        # bin directory has all three under their plain names.
         run: |
           set -e
-          command -v llvm-lipo >/dev/null
+          sudo apt-get update -q
+          sudo apt-get install -y -q llvm-18
+          echo /usr/lib/llvm-18/bin >> "$GITHUB_PATH"
           gh release download -R indygreg/apple-platform-rs --pattern 'apple-codesign-*-x86_64-unknown-linux-musl.tar.gz' -O rcodesign.tar.gz
           tar -xzf rcodesign.tar.gz --wildcards --strip-components=1 '*/rcodesign'
           mkdir -p "$RUNNER_TEMP/bin"
@@ -181,7 +132,7 @@ jobs:
         run: python3 scripts/update-openpak-compatibility.py
       - name: Publish and bundle
         run: >
-          nice -n 10 taskset -c 0-7 bash distribution/macos/create_macos_pr_build_ava.sh . publish_tmp publish ./distribution/macos/entitlements.xml
+          bash distribution/macos/create_macos_pr_build_ava.sh . publish_tmp publish ./distribution/macos/entitlements.xml
           "${{ steps.v.outputs.version }}" "${{ steps.v.outputs.sha }}" Release "-p:ExtraDefineConstants=DISABLE_UPDATER"
       - name: Name it like the others
         run: |
@@ -202,6 +153,3 @@ jobs:
           path: ryujinx-openpak-*
           if-no-files-found: error
           retention-days: 3
-      - name: Clear scratch
-        if: always()
-        run: rm -rf "$RUNNER_TEMP/scratch"

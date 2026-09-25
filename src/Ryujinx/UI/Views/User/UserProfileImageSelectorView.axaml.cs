@@ -10,7 +10,7 @@ using Ryujinx.Ava.UI.Models;
 using Ryujinx.Ava.UI.ViewModels;
 using Ryujinx.Ava.Utilities;
 using Ryujinx.HLE.FileSystem;
-using SkiaSharp;
+using Ryujinx.HLE.HOS.Services.Account.Acc;
 using System.Collections.Generic;
 using System.IO;
 using NavigationEventArgs = FluentAvalonia.UI.Navigation.FANavigationEventArgs;
@@ -79,8 +79,14 @@ namespace Ryujinx.Ava.UI.Views.User
 
             if (result.HasValue)
             {
-                _profile.Image = ProcessProfileImage(await File.ReadAllBytesAsync(result.Value.Path.LocalPath));
-                _parent.GoBack();
+                byte[] image = AccountManager.ProfileImage(await File.ReadAllBytesAsync(result.Value.Path.LocalPath));
+
+                // A file that decodes to nothing leaves the picker up rather than a blank picture.
+                if (image.Length > 0)
+                {
+                    _profile.Image = image;
+                    _parent.GoBack();
+                }
             }
         }
 
@@ -95,25 +101,6 @@ namespace Ryujinx.Ava.UI.Views.User
             {
                 _parent.Navigate(typeof(UserFirmwareAvatarSelectorView), (_parent, _profile));
             }
-        }
-
-        internal static byte[] ProcessProfileImage(byte[] buffer)
-        {
-            using SKBitmap bitmap = SKBitmap.Decode(buffer);
-
-            SKBitmap resizedBitmap = bitmap.Resize(new SKImageInfo(256, 256), new SKSamplingOptions(SKFilterMode.Linear));
-
-            using MemoryStream streamJpg = new();
-
-            if (resizedBitmap != null)
-            {
-                using SKImage image = SKImage.FromBitmap(resizedBitmap);
-                using SKData dataJpeg = image.Encode(SKEncodedImageFormat.Jpeg, 100);
-
-                dataJpeg.SaveTo(streamJpg);
-            }
-
-            return streamJpg.ToArray();
         }
     }
 }

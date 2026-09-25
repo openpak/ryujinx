@@ -7,10 +7,13 @@ using Ryujinx.Common.Logging;
 using Ryujinx.HLE.HOS.Services.Account.OpenPak;
 using Ryujinx.Horizon.Sdk.Account;
 using Ryujinx.OpenPak;
+using SkiaSharp;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Ryujinx.HLE.HOS.Services.Account.Acc
 {
@@ -39,7 +42,8 @@ namespace Ryujinx.HLE.HOS.Services.Account.Acc
 
             _accountSaveDataManager = new AccountSaveDataManager(_profiles);
 
-            // A linked profile goes by its OpenPak name, as a console user does by its account's.
+            // A linked profile goes by its OpenPak name and picture, as a console user does by
+            // its account's.
             OpenPakSession.Instance.SignedInAs += (profileId, nickname) =>
             {
                 string name = nickname.Trim();
@@ -49,6 +53,8 @@ namespace Ryujinx.HLE.HOS.Services.Account.Acc
                 {
                     SetUserName(profile.UserId, name);
                 }
+
+                _ = AdoptAvatarAsync(profileId);
             };
 
             if (!_profiles.TryGetValue(DefaultUserId.ToString(), out _))
@@ -164,6 +170,65 @@ namespace Ryujinx.HLE.HOS.Services.Account.Acc
             }
 
             _accountSaveDataManager.Save(_profiles);
+        }
+
+        /// <summary>
+        /// The picture follows the account on every sign-in, the way the name does. OpenPak serves
+        /// one for every account — the person's own, or the network's default — and a picture
+        /// changed on the website arrives under a new url, so the profile keeps up with it.
+        /// Written only when it differs from what the profile already holds.
+        /// </summary>
+        private async Task AdoptAvatarAsync(string profileId)
+        {
+            try
+            {
+                byte[] avatar = await OpenPakSession.Instance.AvatarAsync(CancellationToken.None);
+
+                if (avatar is not { Length: > 0 } || !_profiles.TryGetValue(profileId, out UserProfile profile))
+                {
+                    return;
+                }
+
+                byte[] image = ProfileImage(avatar);
+
+                if (image.Length > 0 && !image.AsSpan().SequenceEqual(profile.Image))
+                {
+                    SetUserImage(profile.UserId, image);
+                }
+            }
+            catch (Exception exception)
+            {
+                // The profile keeps the picture it has; being signed in is what mattered.
+                Logger.Warning?.Print(LogClass.ServiceAcc, $"[OpenPak] Could not take the account's picture: {exception.Message}");
+            }
+        }
+
+        /// <summary>
+        /// A picture as a profile stores one: the 256x256 JPEG a console's user image is, whatever
+        /// the source was. Empty when the bytes are not an image anything here can read.
+        /// </summary>
+        public static byte[] ProfileImage(byte[] buffer)
+        {
+            try
+            {
+                using SKBitmap bitmap = SKBitmap.Decode(buffer);
+                using SKBitmap resized = bitmap?.Resize(new SKImageInfo(256, 256), new SKSamplingOptions(SKFilterMode.Linear));
+
+                if (resized == null)
+                {
+                    return [];
+                }
+
+                using SKImage image = SKImage.FromBitmap(resized);
+                using SKData jpeg = image.Encode(SKEncodedImageFormat.Jpeg, 100);
+
+                return jpeg.ToArray();
+            }
+            catch (Exception)
+            {
+                // Skia throws instead of answering null when the bytes are not an image at all.
+                return [];
+            }
         }
 
         public void SetUserImage(UserId userId, byte[] image)

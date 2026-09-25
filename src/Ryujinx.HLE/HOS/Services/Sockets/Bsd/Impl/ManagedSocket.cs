@@ -576,6 +576,20 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
                     return result;
                 }
 
+                // SO_NOSIGPIPE is a BSD/macOS option with no Linux equivalent, and the table maps it
+                // to DontLinger, which .NET on Linux rejects with SocketException(95). Returning
+                // EOPNOTSUPP from that is what a guest reads as "this socket is unusable": Risk of
+                // Rain Returns sets it on its NPLN socket and gives up before resolving its tenant
+                // (2026-09-25). Nothing needs doing — .NET sends with MSG_NOSIGNAL on Unix, so the
+                // guest already has the no-SIGPIPE behaviour it is asking for, and Windows has no
+                // SIGPIPE at all. Report success and leave the socket alone.
+                // ponytail: set only; a guest that *reads* SO_NOSIGPIPE still hits the DontLinger
+                // mapping. Give GetSocketOption the same short-circuit if one ever does.
+                if (option == BsdSocketOption.SoNoSigpipe)
+                {
+                    return LinuxError.SUCCESS;
+                }
+
                 if (!WinSockHelper.TryConvertSocketOption(option, level, out SocketOptionName optionName))
                 {
                     Logger.Warning?.Print(LogClass.ServiceBsd, $"Unsupported SetSockOpt Option: {option} Level: {level}");

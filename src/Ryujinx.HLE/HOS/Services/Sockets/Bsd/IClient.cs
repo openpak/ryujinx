@@ -913,6 +913,43 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
             return ResultCode.Success;
         }
 
+        // A blocking recv on a datagram socket with nothing to read parks the single Bsd thread
+        // inside Socket.Receive until a packet arrives. For a game that binds a UDP port and waits
+        // for a peer, that is forever — and every other socket on the session stops with it:
+        // Terraria's NPLN stream (login, friends and presence all answered) went silent in the same
+        // microsecond as its blocking recvfrom on udp/8888, and the game froze (2026-09-25).
+        // Park the request the way a blocking poll parks itself; the server loop re-runs it each
+        // pass and replies once the socket is readable. Datagram sockets only: deferring the
+        // blocking poll of a NEX title's TCP transport broke its IPC once already (see Poll), and
+        // the freeze this fixes is a UDP one.
+        //
+        // Parked with no deadline, exactly like a poll with timeout=-1: a socket closed while its
+        // recv is parked leaves the request in the list. Give it a deadline if that ever shows up.
+        private static bool DeferBlockingReceive(ServiceCtx context, ISocket socket, BsdSocketFlags flags)
+        {
+            if (socket.Poll(0, SelectMode.SelectRead))
+            {
+                // Readable, or closed and about to read EOF: answer in this pass.
+                context.PollResult = 1;
+
+                return false;
+            }
+
+            if (socket.SocketType != SocketType.Dgram || !socket.Blocking || flags.HasFlag(BsdSocketFlags.DontWait))
+            {
+                return false;
+            }
+
+            // Already parked and still empty: PollResult stays 0, so the loop keeps it parked.
+            if (!context.PollForceNonBlocking)
+            {
+                context.PollDeferRequested = true;
+                context.PollDeadlineMs = long.MaxValue;
+            }
+
+            return true;
+        }
+
         [CommandCmif(8)]
         // Recv(u32 socket, u32 flags) -> (i32 ret, u32 bsd_errno, array<i8, 0x22> message)
         public ResultCode Recv(ServiceCtx context)
@@ -930,6 +967,11 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
 
             if (socket != null)
             {
+                if (DeferBlockingReceive(context, socket, socketFlags))
+                {
+                    return ResultCode.Success;
+                }
+
                 errno = socket.Receive(out result, receiveRegion.Memory.Span, socketFlags);
 
                 if (errno == LinuxError.SUCCESS)
@@ -961,6 +1003,11 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
 
             if (socket != null)
             {
+                if (DeferBlockingReceive(context, socket, socketFlags))
+                {
+                    return ResultCode.Success;
+                }
+
                 errno = socket.ReceiveFrom(out result, receiveRegion.Memory.Span, receiveRegion.Memory.Span.Length, socketFlags, out IPEndPoint endPoint);
 
                 if (errno == LinuxError.SUCCESS)

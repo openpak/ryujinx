@@ -5,11 +5,9 @@ using Ryujinx.Ava.UI.Helpers;
 using Ryujinx.Ava.UI.Views.User;
 using Ryujinx.Common;
 using Ryujinx.Common.Helper;
-using Ryujinx.Common.Logging;
 using Ryujinx.HLE.HOS.Services.Account.Acc;
 using Ryujinx.OpenPak;
 using System;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace Ryujinx.Ava.UI.Views.Dialog
@@ -19,8 +17,8 @@ namespace Ryujinx.Ava.UI.Views.Dialog
     /// offline. The first launch runs it on the profile that is already there; *Add account* on the
     /// startup picker runs it for a new one.
     ///
-    /// A profile signed in here takes the account's picture, once. Its name follows the account's
-    /// on every sign-in (the account manager sees to that), as a linked console user's does.
+    /// A profile signed in here takes the account's name and picture, and keeps following them on
+    /// every sign-in (the account manager sees to that), as a linked console user's does.
     /// </summary>
     public static class OpenPakSetup
     {
@@ -96,8 +94,6 @@ namespace Ryujinx.Ava.UI.Views.Dialog
 
                 if (await OpenPakSignInView.Show(intro))
                 {
-                    await AdoptAccountAsync(accounts);
-
                     return;
                 }
 
@@ -194,29 +190,6 @@ namespace Ryujinx.Ava.UI.Views.Dialog
             string name = box.Text?.Trim();
 
             return result == FAContentDialogResult.Primary && !string.IsNullOrEmpty(name) ? name : null;
-        }
-
-        /// <summary>The profile takes the account's picture, the way a console's user does when linked.</summary>
-        private static async Task AdoptAccountAsync(AccountManager accounts)
-        {
-            UserId profile = accounts.LastOpenedUser.UserId;
-
-            try
-            {
-                OpenPakProfile me = await OpenPakApi.Instance.MeAsync(CancellationToken.None);
-
-                byte[] avatar = await OpenPakApi.Instance.ImageAsync(me?.AvatarUrl, CancellationToken.None);
-
-                if (avatar is { Length: > 0 })
-                {
-                    accounts.SetUserImage(profile, UserProfileImageSelectorView.ProcessProfileImage(avatar));
-                }
-            }
-            catch (Exception exception)
-            {
-                // The profile keeps its own picture; being signed in is what mattered.
-                Logger.Warning?.Print(LogClass.Application, $"[OpenPak] Could not copy the account to the profile: {exception.Message}");
-            }
         }
 
         private static UserId NewUserId() => new(Guid.NewGuid().ToString("N"));

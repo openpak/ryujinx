@@ -42,6 +42,11 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
         // instead of a hang.
         private bool _sslMayHoldBufferedPlaintext;
 
+        // Plaintext a Peek has pulled off the wire but nobody has consumed yet.
+        // ponytail: one buffer, grown to the largest peek asked for, no pooling.
+        private byte[] _peeked = [];
+        private int _peekedLength;
+
         public SslManagedSocketConnection(BsdContext bsdContext, SslVersion sslVersion, int socketFd, ISocket socket)
         {
             _bsdContext = bsdContext;
@@ -179,11 +184,45 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
 
         public ResultCode Peek(out int peekCount, Memory<byte> buffer)
         {
-            // NOTE: We cannot support that on .NET SSL API.
-            // As Nintendo's curl implementation detail check if a connection is alive via Peek, we just return that it would block to let it know that it's alive.
-            peekCount = -1;
+            // .NET's SslStream cannot peek, so a peek reads for real and parks the plaintext here
+            // until Read asks for it. Answering a flat WouldBlock instead -- what this did before --
+            // is invisible to a client that reads when it feels like it, and fatal to one that uses
+            // Peek as its readiness check: Moving Out 2's websocket peeks every 5 ms and will not
+            // call Read until a peek says there is something, so it sat through 3058 refusals with
+            // the server's reply undrained in its socket.
+            //
+            // An idle connection still answers WouldBlock, which is what Nintendo's curl reads as
+            // "the connection is alive".
+            if (_peekedLength == 0)
+            {
+                if (!_sslMayHoldBufferedPlaintext && !Socket.Poll(0, SelectMode.SelectRead))
+                {
+                    peekCount = -1;
 
-            return ResultCode.WouldBlock;
+                    return ResultCode.WouldBlock;
+                }
+
+                if (_peeked.Length < buffer.Length)
+                {
+                    _peeked = new byte[buffer.Length];
+                }
+
+                ResultCode fill = Read(out int filled, _peeked.AsMemory(0, buffer.Length));
+
+                if (fill != ResultCode.Success || filled <= 0)
+                {
+                    peekCount = -1;
+
+                    return fill == ResultCode.Success ? ResultCode.WouldBlock : fill;
+                }
+
+                _peekedLength = filled;
+            }
+
+            peekCount = Math.Min(_peekedLength, buffer.Length);
+            _peeked.AsSpan(0, peekCount).CopyTo(buffer.Span);
+
+            return ResultCode.Success;
         }
 
         public int Pending()
@@ -230,6 +269,21 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
 
         public ResultCode Read(out int readCount, Memory<byte> buffer)
         {
+            // Anything a Peek pulled off the wire is handed out here first, in order.
+            if (_peekedLength > 0)
+            {
+                readCount = Math.Min(_peekedLength, buffer.Length);
+                _peeked.AsSpan(0, readCount).CopyTo(buffer.Span);
+                _peekedLength -= readCount;
+
+                if (_peekedLength > 0)
+                {
+                    _peeked.AsSpan(readCount, _peekedLength).CopyTo(_peeked.AsSpan(0));
+                }
+
+                return ResultCode.Success;
+            }
+
             if (!_sslMayHoldBufferedPlaintext && !Socket.Poll(0, SelectMode.SelectRead))
             {
                 readCount = -1;

@@ -137,7 +137,15 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
             catch (SocketException exception)
             {
                 LinuxError errNo = WinSockHelper.ConvertError((WsaError)exception.ErrorCode);
-                return WriteBsdResult(context, 0, errNo);
+                // [OpenPak] -1, not 0. Every other failure exit in this method returns -1, and a
+                // guest that tests `fd < 0` reads 0 as a perfectly good descriptor: it then
+                // believes it owns socket 0 and calls methods on an object that was never built.
+                // Measured with Risk of Rain 2 (2026-09-26), which asks for socket type
+                // 0x10000000 -- SOCK_CLOEXEC with a base type of 0 -- which .NET rejects. Four log
+                // lines and 100 ms after this returned 0/EPROTOTYPE the title dereferenced null at
+                // SwitchPlayer.nss:0x1cfeea0 and took the emulator down with it, identically in two
+                // runs and from two different call paths.
+                return WriteBsdResult(context, -1, errNo);
             }
 
             int newSockFd = _context.RegisterFileDescriptor(newBsdSocket);

@@ -98,6 +98,22 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
             BsdSocketCreationFlags creationFlags = (BsdSocketCreationFlags)((int)type >> (int)BsdSocketCreationFlags.FlagsShift);
             type &= BsdSocketType.TypeMask;
 
+            // [OpenPak] A base type of 0 reached .NET as (SocketType)0, which throws, so every
+            // caller of it got an error and nothing could ever work. Risk of Rain 2 asks for
+            // exactly that -- type 0x10000000, SOCK_CLOEXEC over a base type of 0 -- right after
+            // resolving localhost, and ~105 ms later dereferences null and takes the emulator down
+            // (three runs, identically, whether hosting or joining, while a real Switch plays on).
+            // Returning -1 instead of 0 did not help: the title ignores the result. Treating 0 as
+            // Stream cannot regress anything, because the alternative for type 0 is an
+            // unconditional throw; every other socket this game opens is Stream/IP or Dgram/Udp,
+            // and a loopback control channel is far likelier to be the former. EXPERIMENT: if the
+            // title still fails, try Dgram before concluding the socket is not the problem.
+            if (type == 0)
+            {
+                Logger.Info?.Print(LogClass.ServiceBsd, "[OpenPak] socket type 0 -> Stream (base type unset by the guest)");
+                type = BsdSocketType.Stream;
+            }
+
             if (domain == BsdAddressFamily.Unknown)
             {
                 return WriteBsdResult(context, -1, LinuxError.EPROTONOSUPPORT);

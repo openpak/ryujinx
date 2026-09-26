@@ -188,8 +188,25 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
 
         public int Pending()
         {
-            // Unsupported
-            return 0;
+            // nn::ssl::Connection::Pending is how a non-blocking client asks whether there is
+            // anything to read, and answering a hardcoded 0 tells one that never reads at all. That
+            // is what stalled Moving Out 2: it wrote its websocket upgrade request, asked Pending,
+            // was told nothing was there, and sat on an open socket with the server's reply
+            // undrained in the receive buffer -- no error, no retry, no second call, until the
+            // game's own timeout. Titles that call Read directly, like Unity's HTTP path, were
+            // unaffected, which is why only this one connection ever hung.
+            //
+            // ponytail: a truthful yes/no rather than a count. The real call reports plaintext
+            // buffered inside the SSL object, which .NET does not expose; Poll sees ciphertext
+            // waiting on the socket. A caller using this as a size hint reads one byte and asks
+            // again, and the exactly-full-read heuristic then keeps it draining. Track real
+            // decrypted counts only if some title turns out to need them.
+            if (_sslMayHoldBufferedPlaintext)
+            {
+                return 1;
+            }
+
+            return Socket.Poll(0, SelectMode.SelectRead) ? 1 : 0;
         }
 
         private bool TryTranslateWinSockError(bool isBlocking, WsaError error, out ResultCode resultCode)

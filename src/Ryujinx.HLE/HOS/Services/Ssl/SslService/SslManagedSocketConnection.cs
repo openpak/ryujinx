@@ -185,38 +185,39 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
         public ResultCode Peek(out int peekCount, Memory<byte> buffer)
         {
             // .NET's SslStream cannot peek, so a peek reads for real and parks the plaintext here
-            // until Read asks for it. Answering a flat WouldBlock instead -- what this did before --
+            // until Read consumes it. Answering a flat WouldBlock instead -- what this did before --
             // is invisible to a client that reads when it feels like it, and fatal to one that uses
             // Peek as its readiness check: Moving Out 2's websocket peeks every 5 ms and will not
-            // call Read until a peek says there is something, so it sat through 3058 refusals with
-            // the server's reply undrained in its socket.
+            // call Read until a peek reports data.
             //
-            // An idle connection still answers WouldBlock, which is what Nintendo's curl reads as
-            // "the connection is alive".
-            if (_peekedLength == 0)
+            // The park is topped up to the caller's buffer size while the wire still has something,
+            // because a client that peeks for a whole frame and is handed part of one waits for the
+            // rest -- and the rest may be sitting inside SslStream where the raw socket's Poll
+            // cannot see it. Stopping at the first short read broke Moving Out 2 four frames in.
+            while (_peekedLength < buffer.Length)
             {
-                if (!_sslMayHoldBufferedPlaintext && !Socket.Poll(0, SelectMode.SelectRead))
-                {
-                    peekCount = -1;
-
-                    return ResultCode.WouldBlock;
-                }
-
                 if (_peeked.Length < buffer.Length)
                 {
-                    _peeked = new byte[buffer.Length];
+                    byte[] grown = new byte[buffer.Length];
+                    _peeked.AsSpan(0, _peekedLength).CopyTo(grown);
+                    _peeked = grown;
                 }
 
-                ResultCode fill = Read(out int filled, _peeked.AsMemory(0, buffer.Length));
-
-                if (fill != ResultCode.Success || filled <= 0)
+                if (ReadFromWire(out int filled, _peeked.AsMemory(_peekedLength, buffer.Length - _peekedLength)) != ResultCode.Success || filled <= 0)
                 {
-                    peekCount = -1;
-
-                    return fill == ResultCode.Success ? ResultCode.WouldBlock : fill;
+                    break;
                 }
 
-                _peekedLength = filled;
+                _peekedLength += filled;
+            }
+
+            if (_peekedLength == 0)
+            {
+                // Nothing there. An idle connection answering WouldBlock is what Nintendo's libcurl
+                // reads as "the connection is alive".
+                peekCount = -1;
+
+                return ResultCode.WouldBlock;
             }
 
             peekCount = Math.Min(_peekedLength, buffer.Length);
@@ -284,6 +285,13 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
                 return ResultCode.Success;
             }
 
+            return ReadFromWire(out readCount, buffer);
+        }
+
+        // The read that actually touches the stream. Peek needs this rather than Read, or topping up
+        // its own buffer would just hand back what it has already parked.
+        private ResultCode ReadFromWire(out int readCount, Memory<byte> buffer)
+        {
             if (!_sslMayHoldBufferedPlaintext && !Socket.Poll(0, SelectMode.SelectRead))
             {
                 readCount = -1;

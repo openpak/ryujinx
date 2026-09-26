@@ -44,8 +44,11 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
         private static readonly bool SslTraceEnabled = SslTraceAllHosts ||
             Environment.GetEnvironmentVariable("RYU_BNET_SSL_TRACE") == "1";
 
-        private bool TraceThisHost => SslTraceEnabled && _hostName != null &&
-            (SslTraceAllHosts || _hostName.Contains("battle.net"));
+        // t17service is traced without asking, like battle.net: it is under active bring-up and the
+        // traces are the only view of what the client does with our answers.
+        private bool TraceThisHost => _hostName != null &&
+            (SslTraceAllHosts || SslTraceEnabled && _hostName.Contains("battle.net") ||
+             _hostName.Contains("t17service"));
 
         // A guest that stalls is usually not calling what you assume it is calling. SSLRX/SSLTX
         // only appear for successful transfers, and Read's WouldBlock is skipped on purpose, so a

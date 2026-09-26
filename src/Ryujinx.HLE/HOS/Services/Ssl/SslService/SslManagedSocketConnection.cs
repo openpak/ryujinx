@@ -190,34 +190,37 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
             // Peek as its readiness check: Moving Out 2's websocket peeks every 5 ms and will not
             // call Read until a peek reports data.
             //
-            // The park is topped up to the caller's buffer size while the wire still has something,
-            // because a client that peeks for a whole frame and is handed part of one waits for the
-            // rest -- and the rest may be sitting inside SslStream where the raw socket's Poll
-            // cannot see it. Stopping at the first short read broke Moving Out 2 four frames in.
-            while (_peekedLength < buffer.Length)
-            {
-                if (_peeked.Length < buffer.Length)
-                {
-                    byte[] grown = new byte[buffer.Length];
-                    _peeked.AsSpan(0, _peekedLength).CopyTo(grown);
-                    _peeked = grown;
-                }
-
-                if (ReadFromWire(out int filled, _peeked.AsMemory(_peekedLength, buffer.Length - _peekedLength)) != ResultCode.Success || filled <= 0)
-                {
-                    break;
-                }
-
-                _peekedLength += filled;
-            }
-
+            // One read per peek, deliberately. Topping the park up to the caller's buffer size was
+            // tried, on the theory that a client peeking for a whole frame needs the whole frame:
+            // it made Moving Out 2 worse, stopping it four requests into a session where a single
+            // read carried it past six. Whatever the client does with a short peek, it copes; it
+            // does not cope with us pulling more off the wire than it asked about.
             if (_peekedLength == 0)
             {
-                // Nothing there. An idle connection answering WouldBlock is what Nintendo's libcurl
-                // reads as "the connection is alive".
-                peekCount = -1;
+                if (!_sslMayHoldBufferedPlaintext && !Socket.Poll(0, SelectMode.SelectRead))
+                {
+                    // An idle connection answering WouldBlock is what Nintendo's libcurl reads as
+                    // "the connection is alive".
+                    peekCount = -1;
 
-                return ResultCode.WouldBlock;
+                    return ResultCode.WouldBlock;
+                }
+
+                if (_peeked.Length < buffer.Length)
+                {
+                    _peeked = new byte[buffer.Length];
+                }
+
+                ResultCode fill = ReadFromWire(out int filled, _peeked.AsMemory(0, buffer.Length));
+
+                if (fill != ResultCode.Success || filled <= 0)
+                {
+                    peekCount = -1;
+
+                    return fill == ResultCode.Success ? ResultCode.WouldBlock : fill;
+                }
+
+                _peekedLength = filled;
             }
 
             peekCount = Math.Min(_peekedLength, buffer.Length);
@@ -241,6 +244,11 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
             // waiting on the socket. A caller using this as a size hint reads one byte and asks
             // again, and the exactly-full-read heuristic then keeps it draining. Track real
             // decrypted counts only if some title turns out to need them.
+            if (_peekedLength > 0)
+            {
+                return _peekedLength;
+            }
+
             if (_sslMayHoldBufferedPlaintext)
             {
                 return 1;

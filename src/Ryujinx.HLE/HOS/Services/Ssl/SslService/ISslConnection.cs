@@ -47,6 +47,20 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
         private bool TraceThisHost => SslTraceEnabled && _hostName != null &&
             (SslTraceAllHosts || _hostName.Contains("battle.net"));
 
+        // A guest that stalls is usually not calling what you assume it is calling. SSLRX/SSLTX
+        // only appear for successful transfers, and Read's WouldBlock is skipped on purpose, so a
+        // silent log cannot distinguish "never asked" from "asked and got nothing". Trace the
+        // commands themselves, with the WouldBlock reads counted rather than printed one by one.
+        private int _wouldBlockReads;
+
+        private void Trace(string what)
+        {
+            if (TraceThisHost)
+            {
+                Logger.Info?.Print(LogClass.ServiceSsl, $"SSLCMD {_hostName} {what}");
+            }
+        }
+
         private SslManagedSocketConnection _connection;
         private BsdContext _bsdContext;
         private readonly ulong _processId;
@@ -234,6 +248,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
             }
 
             ResultCode result = _connection.Handshake(_hostName);
+            Trace($"DoHandshakeGetServerCert -> {result} (wantChain={_getServerCertChain})");
 
             if (result == ResultCode.Success)
             {
@@ -274,6 +289,16 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
             if (TraceThisHost && result != ResultCode.Success && result != ResultCode.WouldBlock)
             {
                 Logger.Info?.Print(LogClass.ServiceSsl, $"SSLRX {_hostName} failed: {result}");
+            }
+
+            if (result == ResultCode.WouldBlock)
+            {
+                _wouldBlockReads++;
+
+                if (_wouldBlockReads == 1 || _wouldBlockReads % 500 == 0)
+                {
+                    Trace($"Read -> WouldBlock (x{_wouldBlockReads})");
+                }
             }
 
             if (result == ResultCode.Success)
@@ -332,7 +357,9 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
                 return ResultCode.NoSocket;
             }
 
-            context.ResponseData.Write(_connection.Pending());
+            int pending = _connection.Pending();
+            Trace($"Pending -> {pending}");
+            context.ResponseData.Write(pending);
 
             return ResultCode.Success;
         }
@@ -352,6 +379,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
 
             // TODO: Better error management.
             result = _connection.Peek(out int peekCount, region.Memory);
+            Trace($"Peek -> {result} {peekCount}B");
 
             if (result == ResultCode.Success)
             {
@@ -365,6 +393,8 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
         // Poll(nn::ssl::sf::PollEvent poll_event, u32 timeout) -> nn::ssl::sf::PollEvent
         public ResultCode Poll(ServiceCtx context)
         {
+            Trace("Poll -> NOT IMPLEMENTED");
+
             throw new ServiceNotImplementedException(this, context);
         }
 
@@ -372,6 +402,8 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
         // GetVerifyCertError()
         public ResultCode GetVerifyCertError(ServiceCtx context)
         {
+            Trace("GetVerifyCertError -> NOT IMPLEMENTED");
+
             throw new ServiceNotImplementedException(this, context);
         }
 

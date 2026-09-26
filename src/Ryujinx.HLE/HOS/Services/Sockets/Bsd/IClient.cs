@@ -106,12 +106,19 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
             // Returning -1 instead of 0 did not help: the title ignores the result. Treating 0 as
             // Stream cannot regress anything, because the alternative for type 0 is an
             // unconditional throw; every other socket this game opens is Stream/IP or Dgram/Udp,
-            // and a loopback control channel is far likelier to be the former. EXPERIMENT: if the
-            // title still fails, try Dgram before concluding the socket is not the problem.
+            // and a loopback control channel is far likelier to be the former.
+            //
+            // Stream was WRONG, and the guest said so: mapped that way the socket binds Tcp/7777 --
+            // Mirror's default port -- and the very next call is recvfrom, which answers ENOTCONN
+            // because a listening TCP socket has nothing to receive from. The title asked once, took
+            // the error, never called accept, and simply played on alone; a real Switch in the same
+            // gathering did the same, which is why two consoles that had joined each other appeared
+            // to be in separate games. socket + bind + recvfrom with no accept is a UDP server, so
+            // Dgram is the answer (and the protocol fixup below then picks Udp).
             if (type == 0)
             {
-                Logger.Info?.Print(LogClass.ServiceBsd, "[OpenPak] socket type 0 -> Stream (base type unset by the guest)");
-                type = BsdSocketType.Stream;
+                Logger.Info?.Print(LogClass.ServiceBsd, "[OpenPak] socket type 0 -> Dgram (base type unset by the guest)");
+                type = BsdSocketType.Dgram;
             }
 
             if (domain == BsdAddressFamily.Unknown)

@@ -91,6 +91,15 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
         /// <summary>An OpenPak server is configured and reachable enough to have been set up.</summary>
         public bool Enabled => Server != null;
 
+        /// <summary>Logs a background task that fails, instead of letting it vanish unobserved.</summary>
+        private static void Watch(string what, Task work) => work.ContinueWith(task =>
+        {
+            if (task.IsFaulted)
+            {
+                Logger.Warning?.Print(LogClass.ServiceAcc, $"[OpenPak] Could not sync {what}: {task.Exception?.InnerException}");
+            }
+        }, TaskContinuationOptions.ExecuteSynchronously);
+
         /// <summary>Whether the beat that keeps this account online is running.</summary>
         public bool Beating => _heartbeat != null && _userId != null;
 
@@ -409,9 +418,13 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
 
             // A console publishes its presence again whenever it reconnects, and syncs its lists
             // when the account becomes network-ready.
-            _ = PublishPresenceAsync(force: true);
-            _ = SyncFriendsAsync();
-            _ = SyncModuleCachesAsync();
+            // Watched, not discarded: these three ran as bare fire-and-forget tasks, so when the
+            // module-cache fill threw at sign-in nothing said so — and the guest's friends module was
+            // left reporting its blocked-user list as unavailable, which is enough for a game to give
+            // up on going online at all.
+            Watch("presence", PublishPresenceAsync(force: true));
+            Watch("the friend list", SyncFriendsAsync());
+            Watch("the module caches", SyncModuleCachesAsync());
 
             if (_nickname != null)
             {

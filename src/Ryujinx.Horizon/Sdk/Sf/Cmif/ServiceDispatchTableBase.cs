@@ -10,6 +10,9 @@ namespace Ryujinx.Horizon.Sdk.Sf.Cmif
 {
     abstract class ServiceDispatchTableBase
     {
+        /// <summary>[OpenPak] Whether to print every command dispatched, from OPENPAK_IPC_TRACE=1.</summary>
+        private static readonly bool IpcTrace = Environment.GetEnvironmentVariable("OPENPAK_IPC_TRACE") == "1";
+
         private const uint MaxCmifVersion = 1;
 
         public abstract Result ProcessMessage(ref ServiceDispatchContext context, ReadOnlySpan<byte> inRawData);
@@ -34,6 +37,16 @@ namespace Ryujinx.Horizon.Sdk.Sf.Cmif
 
             ReadOnlySpan<byte> inMessageRawData = inRawData[Unsafe.SizeOf<CmifInHeader>()..];
             uint commandId = inHeader.CommandId;
+
+            // [OpenPak] OPENPAK_IPC_TRACE=1 prints every service command the guest issues, in order.
+            // Most commands are answered without a log line of their own, so when a title gives up
+            // without a word — Moving Out 2 asks for its friend list and then simply never asks for the
+            // profiles — the ordered sequence is the only way to see WHICH call it stopped after, and
+            // how that differs between a launch that works and one that does not.
+            if (IpcTrace)
+            {
+                Logger.Info?.Print(LogClass.KernelIpc, $"[OpenPak] IPC {objectName} command {commandId}");
+            }
 
             Span<CmifOutHeader> outHeader = Span<CmifOutHeader>.Empty;
 
@@ -61,6 +74,17 @@ namespace Ryujinx.Horizon.Sdk.Sf.Cmif
             Logger.Trace?.Print(LogClass.KernelIpc, $"{objectName}.{commandHandler.MethodName} called");
 
             Result commandResult = commandHandler.Invoke(ref outHeader, ref context, inMessageRawData);
+
+            // [OpenPak] The answer as well as the question: which command a title stopped after says
+            // nothing about WHY until the result and the first out values are next to it.
+            if (IpcTrace)
+            {
+                string outData = outHeader.IsEmpty
+                    ? "none"
+                    : Convert.ToHexString(MemoryMarshal.CreateReadOnlySpan(ref Unsafe.As<CmifOutHeader, byte>(ref outHeader[0]), Unsafe.SizeOf<CmifOutHeader>() + 16)[Unsafe.SizeOf<CmifOutHeader>()..]);
+
+                Logger.Info?.Print(LogClass.KernelIpc, $"[OpenPak] IPC {objectName} command {commandId} -> {commandResult} out {outData}");
+            }
 
             if (commandResult.Module is SfResult.ModuleId or
                 HipcResult.ModuleId)

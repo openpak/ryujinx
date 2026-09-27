@@ -323,11 +323,49 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         {
             // Answered per slot, in the order asked, as the module matches its results by id.
             // A user nobody has looked up yet is left invalid and fetched for the next call.
+            //
+            // [OpenPak] Which ids resolve is logged because an unresolved one is invisible from
+            // outside and a game that cannot build its friend list just gives up. Note that the
+            // local player is never their own friend, so their own profile can only come from the
+            // user cache, which starts empty.
+            int resolved = 0;
             for (int index = 0; index < friendIds.Length && index < profileList.Length; index++)
             {
-                profileList[index] = User(friendIds[index].Id) is { } user
-                    ? OpenPakFriends.ToProfileImpl(user)
-                    : default;
+                if (User(friendIds[index].Id) is { } user)
+                {
+                    profileList[index] = OpenPakFriends.ToProfileImpl(user);
+                    resolved++;
+                }
+                else
+                {
+                    profileList[index] = default;
+                }
+            }
+
+            if (friendIds.Length > 0)
+            {
+                StringBuilder asked = new();
+
+                foreach (NetworkServiceAccountId friendId in friendIds)
+                {
+                    asked.Append(asked.Length > 0 ? ", " : "").Append(friendId.Id.ToString("x16"));
+
+                    if (User(friendId.Id) == null)
+                    {
+                        asked.Append(" (UNRESOLVED)");
+                    }
+                }
+
+                // Quiet when every id resolved; a miss leaves a sentinel, because an unresolved profile
+                // is invisible from outside and a game that cannot build its friend list just gives up.
+                if (resolved == friendIds.Length)
+                {
+                    Logger.Debug?.Print(LogClass.ServiceFriend, $"[OpenPak] GetProfileList {resolved}/{friendIds.Length} resolved: {asked}");
+                }
+                else
+                {
+                    Logger.Warning?.Print(LogClass.ServiceFriend, $"[OpenPak] GetProfileList {resolved}/{friendIds.Length} resolved: {asked}");
+                }
             }
 
             Warm(friendIds);

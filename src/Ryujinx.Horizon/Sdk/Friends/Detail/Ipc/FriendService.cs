@@ -507,9 +507,15 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(11000)]
         public Result GetProfileImageUrl(out Url imageUrl, Url url, int arg2)
         {
-            imageUrl = default;
-
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend, new { url, arg2 });
+            // The game hands in the thumbnail URL from a friend's record and asks for the URL to
+            // fetch. Answering an empty one is why friends showed a placeholder avatar here while a
+            // real console showed the real thing: nx-baas already puts
+            // cdn-image-<...>.baas.nintendo.com/1/<userId> in the friend payload, that host is
+            // redirected to us, and it serves the image. Pass the URL through.
+            //
+            // ponytail: unchanged, not resized. arg2 selects a variant on hardware and nx-baas
+            // serves /1/ and /2/; revisit if some title asks for a size we do not have.
+            imageUrl = url;
 
             return Result.Success;
         }

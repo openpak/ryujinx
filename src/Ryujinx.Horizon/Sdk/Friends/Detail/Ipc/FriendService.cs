@@ -384,7 +384,19 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
                 return new BaasUser(friend.Id, friend.Nickname, friend.ThumbnailUrl) { PlayLog = friend.PlayLog };
             }
 
-            return OpenPakBaas.User(id);
+            if (OpenPakBaas.User(id) is { } cached)
+            {
+                return cached;
+            }
+
+            // Last resort for the local player, who is never their own friend: their own user as of the
+            // last sync. Answering an invalid slot for yourself is what a game notices first.
+            if (OpenPakBaas.UserSetting is { } me && me.Id == id)
+            {
+                return new BaasUser(me.Id, me.Nickname, me.ThumbnailUrl);
+            }
+
+            return null;
         }
 
         /// <summary>Ask for the ids nothing has cached yet, off this thread (§A.7).</summary>

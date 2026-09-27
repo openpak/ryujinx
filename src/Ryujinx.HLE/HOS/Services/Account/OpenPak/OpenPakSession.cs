@@ -402,6 +402,7 @@ namespace Ryujinx.HLE.HOS.Services.Account.OpenPak
             // The guest's friends module speaks to BAAS through this session: the REST surface the
             // sysmodule itself uses (§A), with this user's bearer on it.
             OpenPakBaas.Attach(_userId, SendBaasAsync);
+            OpenPakBaas.RememberUser(new BaasUser(_networkServiceAccountId, _nickname, _avatarUrl));
 
             StartHeartbeat();
             StartPush();

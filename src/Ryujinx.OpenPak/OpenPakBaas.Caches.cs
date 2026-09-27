@@ -42,6 +42,26 @@ namespace Ryujinx.OpenPak
             }
         }
 
+        /// <summary>
+        /// Put a user we already know into the cache without asking BAAS for it. The local player is
+        /// the case that matters: they are never their own friend, so nothing else ever caches them,
+        /// and a game that asks for its own profile alongside its friends' gets an invalid slot back
+        /// (measured on Moving Out 2: three ids asked, two resolved). Their name and image come with
+        /// the login reply, so the first lookup of a session can be answered from it.
+        /// </summary>
+        public static void RememberUser(BaasUser user)
+        {
+            if (user == null || user.Id == 0)
+            {
+                return;
+            }
+
+            lock (_cacheLock)
+            {
+                _users[user.Id] = user;
+            }
+        }
+
         /// <summary>One user out of the cache, or null.</summary>
         public static BaasUser User(ulong id)
         {

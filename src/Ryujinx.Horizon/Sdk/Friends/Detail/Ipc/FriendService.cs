@@ -27,8 +27,29 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             _permissionLevel = permissionLevel;
 
             Os.CreateSystemEvent(out _completionEvent, EventClearMode.ManualClear, interProcess: true).AbortOnFailure();
-            Os.SignalSystemEvent(ref _completionEvent); // TODO: Figure out where we are supposed to signal this.
+            Os.SignalSystemEvent(ref _completionEvent);   // idle: nothing in flight
         }
+
+        /// <summary>
+        /// The completion event this service hands out (command 0) reports whether the work a command
+        /// started has finished: it is cleared while that work runs and signalled when it ends. The
+        /// guest clears-waits-reads around such a call, so an event that is merely signalled once at
+        /// construction leaves a guest that cleared it waiting forever — and it only bites when the
+        /// work really has to run, i.e. the FIRST launch with cold caches. The launch after, answered
+        /// from cache, takes the nothing-to-do path and looks fine. That is the "only ever works the
+        /// second time" shape: measured on Moving Out 2, whose T17 init died 1.4 s after asking for the
+        /// friend list, then cancelled (command 1) and reported "error connecting to T17 services".
+        /// </summary>
+        private void Await(Task work)
+        {
+            Os.ClearSystemEvent(ref _completionEvent);
+
+            work.ContinueWith(_ => Os.SignalSystemEvent(ref _completionEvent),
+                              TaskContinuationOptions.ExecuteSynchronously);
+        }
+
+        /// <summary>Nothing to wait for: the answer is already in hand.</summary>
+        private void Done() => Os.SignalSystemEvent(ref _completionEvent);
 
         /// <summary>
         /// Whether this port carries the viewer bit (friend:v, friend:m, friend:a). A viewer reads
@@ -60,7 +81,9 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         [CmifCommand(1)]
         public Result Cancel()
         {
-            Logger.Stub?.PrintStub(LogClass.ServiceFriend);
+            // We cannot stop an HTTP sync that is already in flight, but a guest that cancels must not
+            // be left waiting on the completion event for work it has given up on.
+            Done();
 
             return Result.Success;
         }
@@ -214,7 +237,11 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             // thing this service may never do.
             if (OpenPakFriends.AvailableFor(userId) && !OpenPakBaas.FriendListAvailable)
             {
-                _ = OpenPakBaas.SyncFriendListAsync(true, CancellationToken.None);
+                Await(OpenPakBaas.SyncFriendListAsync(true, CancellationToken.None));
+            }
+            else
+            {
+                Done();
             }
 
             return Result.Success;
@@ -309,7 +336,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         {
             if (OpenPakFriends.AvailableFor(userId) && !OpenPakBaas.BlockListAvailable)
             {
-                _ = OpenPakBaas.SyncBlockListAsync(CancellationToken.None);
+                Await(OpenPakBaas.SyncBlockListAsync(CancellationToken.None));
             }
 
             return Result.Success;
@@ -655,7 +682,11 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
             // guest answered at once. The list on screen refreshes through the notification event.
             if (OpenPakFriends.AvailableFor(userId))
             {
-                _ = OpenPakBaas.SyncFriendListAsync(true, CancellationToken.None);
+                Await(OpenPakBaas.SyncFriendListAsync(true, CancellationToken.None));
+            }
+            else
+            {
+                Done();
             }
 
             return Result.Success;
@@ -1061,7 +1092,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
 
             if (OpenPakFriends.AvailableFor(userId))
             {
-                _ = OpenPakBaas.SyncBlockListAsync(CancellationToken.None);
+                Await(OpenPakBaas.SyncBlockListAsync(CancellationToken.None));
             }
 
             return Result.Success;
@@ -1245,7 +1276,7 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
 
             if (OpenPakFriends.AvailableFor(userId))
             {
-                _ = OpenPakBaas.SyncUserSettingAsync(CancellationToken.None);
+                Await(OpenPakBaas.SyncUserSettingAsync(CancellationToken.None));
             }
 
             return Result.Success;

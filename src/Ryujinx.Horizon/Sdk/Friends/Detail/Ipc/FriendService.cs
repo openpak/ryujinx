@@ -21,35 +21,39 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         private readonly FriendsServicePermissionLevel _permissionLevel;
         private SystemEventType _completionEvent;
 
+        // Signals the completion event from any host thread: a sync finishes on a pool thread, where
+        // Os.SignalSystemEvent throws (the syscall context is thread-static).
+        private readonly Action _signalCompletionEvent;
+
         public FriendService(IEmulatorAccountManager accountManager, FriendsServicePermissionLevel permissionLevel)
         {
             _accountManager = accountManager;
             _permissionLevel = permissionLevel;
 
+            // Created NOT signalled, as the friends module creates it (22.5.0, 0xc7750). The client
+            // library asks "has my call finished" by polling this event and nothing else
+            // (AsyncContextInternal::IsCompleted), while the call itself runs on a worker thread it
+            // has only just started. An event that is already signalled answers yes before that
+            // thread has run, and the game reads a result nobody has written yet. Whether it loses
+            // that race is timing: Moving Out 2 lost it on every first launch and won it on every
+            // relaunch, and reported "An error has occurred connecting to T17 services".
             Os.CreateSystemEvent(out _completionEvent, EventClearMode.ManualClear, interProcess: true).AbortOnFailure();
-            Os.SignalSystemEvent(ref _completionEvent);   // idle: nothing in flight
+            HorizonStatic.Syscall.GetEventSignaller(Os.GetWritableHandleOfSystemEvent(ref _completionEvent), out _signalCompletionEvent).AbortOnFailure();
         }
 
         /// <summary>
         /// The completion event this service hands out (command 0) reports whether the work a command
-        /// started has finished: it is cleared while that work runs and signalled when it ends. The
-        /// guest clears-waits-reads around such a call, so an event that is merely signalled once at
-        /// construction leaves a guest that cleared it waiting forever — and it only bites when the
-        /// work really has to run, i.e. the FIRST launch with cold caches. The launch after, answered
-        /// from cache, takes the nothing-to-do path and looks fine. That is the "only ever works the
-        /// second time" shape: measured on Moving Out 2, whose T17 init died 1.4 s after asking for the
-        /// friend list, then cancelled (command 1) and reported "error connecting to T17 services".
+        /// started has finished: it is cleared while that work runs and signalled when it ends.
         /// </summary>
         private void Await(Task work)
         {
             Os.ClearSystemEvent(ref _completionEvent);
 
-            work.ContinueWith(_ => Os.SignalSystemEvent(ref _completionEvent),
-                              TaskContinuationOptions.ExecuteSynchronously);
+            work.ContinueWith(_ => _signalCompletionEvent(), TaskContinuationOptions.ExecuteSynchronously);
         }
 
         /// <summary>Nothing to wait for: the answer is already in hand.</summary>
-        private void Done() => Os.SignalSystemEvent(ref _completionEvent);
+        private void Done() => _signalCompletionEvent();
 
         /// <summary>
         /// Whether this port carries the viewer bit (friend:v, friend:m, friend:a). A viewer reads
@@ -2328,6 +2332,10 @@ namespace Ryujinx.Horizon.Sdk.Friends.Detail.Ipc
         {
             if (disposing)
             {
+                // The module signals the event as the session goes (22.5.0, 0xc7700), and that is
+                // what completes a call that needed no work: the client closes its session only
+                // after it has stored the result.
+                _signalCompletionEvent();
                 Os.DestroySystemEvent(ref _completionEvent);
             }
         }

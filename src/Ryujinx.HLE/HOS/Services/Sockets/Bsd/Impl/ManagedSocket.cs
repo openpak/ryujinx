@@ -130,9 +130,27 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
             // time regardless. Titles bind explicitly before connecting on a socket whose family
             // we may have answered differently than they asked (an IPv6 gRPC socket over an IPv4
             // answer, for one), and failing that optional bind aborts the whole connection — so
-            // it is treated as the no-op it is.
+            // it can never fail.
+            //
+            // [OpenPak] It is still made on a datagram socket, because there it does pin something:
+            // a socket that is bound and never connected is one the title receives on. Skipped, the
+            // host socket stayed unbound and every recvfrom answered EOPNOTSUPP where a console
+            // answers EWOULDBLOCK — measured on Moving Out 2, whose Fusion runner binds port 0 and
+            // polls recvfrom. (It was not why that session ended; it was simply wrong.)
             if (localEndPoint.Port == 0)
             {
+                if (ProtocolType == ProtocolType.Udp)
+                {
+                    try
+                    {
+                        Socket.Bind(localEndPoint);
+                    }
+                    catch (Exception exception)
+                    {
+                        Logger.Debug?.Print(LogClass.ServiceBsd, $"Bind to port 0 not made: {exception.Message}");
+                    }
+                }
+
                 return LinuxError.SUCCESS;
             }
 

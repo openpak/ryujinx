@@ -45,7 +45,7 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
             _isPrivileged = isPrivileged;
         }
 
-        private ResultCode WriteBsdResult(ServiceCtx context, int result, LinuxError errorCode = LinuxError.SUCCESS)
+        private ResultCode WriteBsdResult(ServiceCtx context, int result, LinuxError errorCode = LinuxError.SUCCESS, [CallerMemberName] string operation = null)
         {
             if (errorCode != LinuxError.SUCCESS)
             {
@@ -58,7 +58,7 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
 
                 if (errorCode != LinuxError.EWOULDBLOCK && !discardedDeferredRecheck)
                 {
-                    Logger.Warning?.Print(LogClass.ServiceBsd, $"Operation failed with error {errorCode}.");
+                    Logger.Warning?.Print(LogClass.ServiceBsd, $"{operation} failed with error {errorCode}.");
                 }
 
                 result = -1;

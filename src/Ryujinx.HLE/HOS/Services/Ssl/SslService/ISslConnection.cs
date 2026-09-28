@@ -44,6 +44,11 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
         private static readonly bool SslTraceEnabled = SslTraceAllHosts ||
             Environment.GetEnvironmentVariable("RYU_BNET_SSL_TRACE") == "1";
 
+        // [OpenPak] How much of each transfer the trace prints. 96 bytes is a request line and no
+        // more: RYU_SSL_TRACE_BYTES=65536 prints whole bodies when the body is the question.
+        private static readonly int SslTraceBytes =
+            int.TryParse(Environment.GetEnvironmentVariable("RYU_SSL_TRACE_BYTES"), out int bytes) && bytes > 0 ? bytes : 96;
+
         // t17service is traced without asking, like battle.net: it is under active bring-up and the
         // traces are the only view of what the client does with our answers.
         private bool TraceThisHost => _hostName != null &&
@@ -309,7 +314,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
                 context.ResponseData.Write(readCount);
                 if (TraceThisHost)
                 {
-                    int n = Math.Min(readCount, 96);
+                    int n = Math.Min(readCount, SslTraceBytes);
                     Logger.Info?.Print(LogClass.ServiceSsl, $"SSLRX {_hostName} {readCount}B: {Convert.ToHexString(region.Memory.Span[..n])}");
                 }
             }
@@ -331,7 +336,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
 
             if (TraceThisHost)
             {
-                int n = (int)Math.Min(region.Memory.Length, 96);
+                int n = (int)Math.Min(region.Memory.Length, SslTraceBytes);
                 Logger.Info?.Print(LogClass.ServiceSsl, $"SSLTX {_hostName} {region.Memory.Length}B: {Convert.ToHexString(region.Memory.Span[..n])}");
             }
 

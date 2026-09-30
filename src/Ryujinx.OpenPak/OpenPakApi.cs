@@ -43,6 +43,7 @@ namespace Ryujinx.OpenPak
         // cleared with everything else whenever the address does.
         private readonly ConcurrentDictionary<string, string> _catalogueNames = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, string> _catalogueStatuses = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, string> _cataloguePlayability = new(StringComparer.OrdinalIgnoreCase);
         private bool _catalogueLoaded;
 
         private OpenPakApi()
@@ -134,6 +135,7 @@ namespace Ryujinx.OpenPak
             _baseUrl = OpenPakConfig.WebsiteUrl;
             _catalogueNames.Clear();
             _catalogueStatuses.Clear();
+            _cataloguePlayability.Clear();
             _catalogueLoaded = false;
         }
 
@@ -507,6 +509,41 @@ namespace Ryujinx.OpenPak
             return _catalogueStatuses;
         }
 
+        /// <summary>The canonical name this emulator answers to in the catalogue's playability map.</summary>
+        private const string PlayabilityClient = "Ryujinx";
+
+        /// <summary>
+        /// How far each title runs *in this emulator*, keyed by lower-case title id, out of the
+        /// same catalogue fetch. One website row is what Ryujinx, Citron and Eden all read, so a
+        /// verdict entered once is the same in all three. Titles the catalogue says nothing about
+        /// are simply absent: the caller keeps its own built-in compatibility row for those.
+        /// </summary>
+        public async Task<IReadOnlyDictionary<string, string>> CataloguePlayabilityAsync(CancellationToken cancellationToken)
+        {
+            await CatalogueNameAsync("0", cancellationToken); // loads the catalogue once
+
+            return _cataloguePlayability;
+        }
+
+        /// <summary>
+        /// This client's playability verdict on one catalogue row, or null when the site has no
+        /// opinion — the <c>playability</c> field missing (an older website), an empty object,
+        /// only other emulators named, or a word outside the five the compatibility list uses.
+        /// Silence is never itself a verdict, so a title never gets downgraded for it.
+        /// </summary>
+        public static string PlayabilityOf(JsonElement title)
+        {
+            if (!title.TryGetProperty("playability", out JsonElement map) || map.ValueKind != JsonValueKind.Object ||
+                !map.TryGetProperty(PlayabilityClient, out JsonElement mine) || mine.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            string verdict = mine.GetString()?.ToLowerInvariant();
+
+            return verdict is "playable" or "ingame" or "menus" or "boots" or "nothing" ? verdict : null;
+        }
+
         public async Task<string> CatalogueNameAsync(string titleId, CancellationToken cancellationToken)
         {
             if (string.IsNullOrEmpty(titleId))
@@ -525,6 +562,7 @@ namespace Ryujinx.OpenPak
                     {
                         string name = String(title, "name");
                         string status = String(title, "status");
+                        string playability = PlayabilityOf(title);
 
                         // A title is one catalogue row but several title ids (one per region);
                         // every id gets the row's name and status, or a European copy shows no
@@ -557,6 +595,11 @@ namespace Ryujinx.OpenPak
                             if (!string.IsNullOrEmpty(status))
                             {
                                 _catalogueStatuses[id.ToLowerInvariant()] = status.ToLowerInvariant();
+                            }
+
+                            if (!string.IsNullOrEmpty(playability))
+                            {
+                                _cataloguePlayability[id.ToLowerInvariant()] = playability;
                             }
                         }
                     }

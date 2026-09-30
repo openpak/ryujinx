@@ -41,6 +41,7 @@ namespace Ryujinx.Ava.Systems.AppLibrary
 
                 Compatibility = CompatibilityDatabase.Find(value);
                 OpenPakCompatibility = OpenPak.OpenPakCompatibility.Find(IdString);
+                SitePlayability = OpenPak.OpenPakCompatibility.Playability(IdString);
                 RichPresenceSpec = PlayReports.Analyzer.TryGetSpec(IdString, out GameSpec gameSpec)
                     ? gameSpec
                     : default(Optional<GameSpec>);
@@ -77,16 +78,24 @@ namespace Ryujinx.Ava.Systems.AppLibrary
 
         public Optional<CompatibilityEntry> Compatibility { get; private set; }
 
-        public bool HasPlayabilityInfo => Compatibility.HasValue;
+        /// <summary>
+        /// The website's playability verdict for this title, when the catalogue has one. It is the
+        /// answer all three emulators share, so it wins over the list bundled with this build;
+        /// everything the catalogue does not cover keeps that list's row instead. A silent site is
+        /// never a verdict, so nothing is downgraded for it.
+        /// </summary>
+        [JsonIgnore] public LocaleKeys? SitePlayability { get; private set; }
 
-        public string LocalizedStatus => Compatibility.Convert(x => x.LocalizedStatus);
+        public bool HasPlayabilityInfo => PlayabilityStatus.HasValue;
+
+        public string LocalizedStatus => PlayabilityStatus is { } status ? LocaleManager.Instance[status] : string.Empty;
 
         public bool HasCompatibilityLabels => !FormattedCompatibilityLabels.Equals(string.Empty);
 
         public string FormattedCompatibilityLabels
             => Compatibility.Convert(x => x.FormattedIssueLabels).OrElse(string.Empty);
 
-        public LocaleKeys? PlayabilityStatus => Compatibility.Convert(x => x.Status).OrElse(null);
+        public LocaleKeys? PlayabilityStatus => SitePlayability ?? Compatibility.Convert(x => x.Status).OrElse(null);
 
         public (LocaleKeys Status, string Backend)? OpenPakCompatibility { get; private set; }
 
@@ -129,18 +138,15 @@ namespace Ryujinx.Ava.Systems.AppLibrary
         }
 
         public string LocalizedStatusTooltip =>
-            Compatibility.Convert(x =>
-#pragma warning disable CS8509 // It is exhaustive for all possible values this can contain.
-                LocaleManager.Instance[x.Status switch
-#pragma warning restore CS8509
-                {
-                    LocaleKeys.CompatibilityListPlayable => LocaleKeys.CompatibilityListPlayableTooltip,
-                    LocaleKeys.CompatibilityListIngame => LocaleKeys.CompatibilityListIngameTooltip,
-                    LocaleKeys.CompatibilityListMenus => LocaleKeys.CompatibilityListMenusTooltip,
-                    LocaleKeys.CompatibilityListBoots => LocaleKeys.CompatibilityListBootsTooltip,
-                    LocaleKeys.CompatibilityListNothing => LocaleKeys.CompatibilityListNothingTooltip,
-                }]
-            ).OrElse(string.Empty);
+            PlayabilityStatus switch
+            {
+                LocaleKeys.CompatibilityListPlayable => LocaleManager.Instance[LocaleKeys.CompatibilityListPlayableTooltip],
+                LocaleKeys.CompatibilityListIngame => LocaleManager.Instance[LocaleKeys.CompatibilityListIngameTooltip],
+                LocaleKeys.CompatibilityListMenus => LocaleManager.Instance[LocaleKeys.CompatibilityListMenusTooltip],
+                LocaleKeys.CompatibilityListBoots => LocaleManager.Instance[LocaleKeys.CompatibilityListBootsTooltip],
+                LocaleKeys.CompatibilityListNothing => LocaleManager.Instance[LocaleKeys.CompatibilityListNothingTooltip],
+                _ => string.Empty,
+            };
 
 
         [JsonIgnore] public string IdString => Id.ToString("x16");

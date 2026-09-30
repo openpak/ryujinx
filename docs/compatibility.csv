@@ -234,7 +234,7 @@
 010033F00B3FA000,"Anima: Gate of Memories - Arcane Edition",nvdec,playable,2021-01-26 16:55:51
 01007A400B3F8000,"Anima: Gate of Memories - The Nameless Chronicles",,playable,2021-06-14 14:33:06
 0100F38011CFE000,"Animal Crossing: New Horizons Island Transfer Tool",services;Needs Update;Incomplete,ingame,2022-12-07 13:51:19
-01006F8002326000,"Animal Crossing™: New Horizons",gpu;crash;nvdec;online-broken;ldn-works;mac-bug,ingame,2024-09-23 13:31:49
+01006F8002326000,"Animal Crossing™: New Horizons",gpu;crash;nvdec;ldn-works;mac-bug,playable,2026-09-30 00:00:00
 010019500E642000,"Animal Fight Club",gpu,ingame,2020-12-13 13:13:33
 01002F4011A8E000,"Animal Fun for Toddlers and Kids",services,boots,2020-12-15 16:45:29
 010035500CA0E000,"Animal Hunter Z",,playable,2020-12-13 12:50:35
@@ -786,7 +786,7 @@
 010046600BD0E000,"Crash Dummy",nvdec,playable,2020-05-23 11:12:43
 0100BF200CD74000,"Crashbots",,playable,2022-07-22 13:50:52
 010027100BD16000,"Crashlands",,playable,2021-05-27 20:30:06
-0100F9F00C696000,"Crash™ Team Racing Nitro-Fueled",gpu;nvdec;online-broken,ingame,2023-06-25 02:40:17
+0100F9F00C696000,"Crash™ Team Racing Nitro-Fueled",gpu;nvdec,playable,2026-09-30 00:00:00
 0100BF7006BCA000,"Crawl",,playable,2020-05-22 10:16:05
 0100C66007E96000,"Crayola Scoot",nvdec,playable,2022-07-22 14:01:55
 01005BA00F486000,"Crayon Shin-chan Ora to Hakase no Natsuyasumi Owaranai Nanokakan no Tabi",,playable,2021-07-21 10:41:33
@@ -942,6 +942,7 @@
 0100B6D00DA6E000,"Ding Dong XL",,playable,2020-07-14 16:13:19
 01002E4011924000,"Dininho Adventures",,playable,2020-10-03 17:25:51
 010027E0158A6000,"Dininho Space Adventure",,playable,2023-01-14 22:43:04
+0100A5A020D5E000,"Dinkum",,playable,2026-09-30 00:00:00
 0100A8A013DA4000,"Dirt Bike Insanity",,playable,2021-01-31 13:27:38
 01004CB01378A000,"Dirt Trackin Sprint Cars",nvdec;online-broken,playable,2022-10-17 16:34:56
 0100918014B02000,"Disagaea 6: Defiance of Destiny Demo",demo,playable,2022-10-26 20:02:04
@@ -970,6 +971,7 @@
 010007200AC0E000,"Don't Die, Mr Robot!",nvdec,playable,2022-09-02 18:34:38
 0100E470067A8000,"Don't Knock Twice",,playable,2024-05-08 22:37:58
 0100C4D00B608000,"Don't Sink",gpu,ingame,2021-02-26 15:41:11
+010090100E334000,"Don't Starve Together",,playable,2026-09-30 00:00:00
 0100751007ADA000,"Don't Starve: Nintendo Switch Edition",nvdec,playable,2022-02-05 20:43:34
 010088B010DD2000,"Dongo Adventure",,playable,2022-10-04 16:22:26
 0100C1F0051B6000,"Donkey Kong Country™: Tropical Freeze",,playable,2024-08-05 16:46:10
@@ -1616,7 +1618,7 @@
 0100EF50132BE000,"Kingdoms of Amalur: Re-Reckoning",,playable,2023-08-10 13:05:08
 010091201605A000,"Kirby and the Forgotten Land (Demo version)",demo,playable,2022-08-21 21:03:01
 0100227010460000,"Kirby Fighters™ 2",ldn-works;online,playable,2021-06-17 13:06:39
-0100A8E016236000,"Kirby’s Dream Buffet™",crash;online-broken;Needs Update;ldn-works,ingame,2024-03-03 17:04:44
+0100A8E016236000,"Kirby’s Dream Buffet™",crash;Needs Update;ldn-works,playable,2026-09-30 00:00:00
 010091D01A57E000,"Kirby’s Return to Dream Land Deluxe - Demo",demo,playable,2023-02-18 17:21:55
 01006B601380E000,"Kirby’s Return to Dream Land™ Deluxe",,playable,2024-05-16 19:58:04
 01004D300C5AE000,"Kirby™ and the Forgotten Land",gpu,ingame,2024-03-11 17:11:21
@@ -1927,6 +1929,7 @@
 01002A900D6D6000,"Motorsport Manager for Nintendo Switch™",nvdec,playable,2022-08-05 12:48:14
 01009DB00D6E0000,"Mountain Rescue Simulator",,playable,2022-09-20 16:36:48
 0100C4C00E73E000,"Moving Out",nvdec,playable,2021-06-07 21:17:24
+010065D018172000,"Moving Out 2",,playable,2026-09-30 00:00:00
 0100D3300F110000,"Mr Blaster",,playable,2022-09-14 17:56:24
 0100DCA011262000,"Mr. DRILLER DrillLand",nvdec,playable,2020-07-24 13:56:48
 010031F002B66000,"Mr. Shifty",slow,playable,2020-05-08 15:28:16
@@ -2152,6 +2155,7 @@
 010097F010FE6000,"Our Two Bedroom Story",gpu;nvdec,ingame,2023-10-10 17:41:20
 0100D5D00C6BE000,"Our World Is Ended.",nvdec,playable,2021-01-19 22:46:57
 01005A700A166000,"OUT OF THE BOX",,playable,2021-01-28 01:34:27
+0100ED9024EB8000,"Outbound",,playable,2026-09-30 00:00:00
 0100D9F013102000,"Outbreak Lost Hope",crash,boots,2021-04-26 18:01:23
 01006EE013100000,"Outbreak The Nightmare Chronicles",,playable,2022-10-13 10:41:57
 0100A0D013464000,"Outbreak: Endless Nightmares",,playable,2022-10-29 12:35:49
@@ -2458,8 +2462,9 @@
 0100E9C010EA8000,"Rise of Insanity",,playable,2020-08-30 15:42:14
 01006BA00E652000,"Rise: Race The Future",,playable,2021-02-27 13:29:06
 010020C012F48000,"Rising Hell",,playable,2022-10-31 13:54:02
+0100AAA00ACBE800,"Risk of Rain",,playable,2026-09-30 00:00:00
 0100D1801A0F4000,"Risk of Rain Returns",,playable,2025-06-28 04:24:04
-010076D00E4BA000,"Risk of Rain 2",online-broken,playable,2024-03-04 17:01:05
+010076D00E4BA000,"Risk of Rain 2",,playable,2026-09-30 00:00:00
 0100E8300A67A000,"RISK® Global Domination",nvdec;online-broken,playable,2022-08-01 18:53:28
 010042500FABA000,"Ritual: Crown of Horns",,playable,2021-01-26 16:01:47
 0100BD300F0EC000,"Ritual: Sorcerer Angel",,playable,2021-03-02 13:51:19

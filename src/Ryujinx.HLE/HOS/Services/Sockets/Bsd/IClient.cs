@@ -10,6 +10,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
@@ -18,17 +19,7 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
     [Service("bsd:u", false)]
     class IClient : IpcService
     {
-        // How long a select carrying a wakeup event fd parks before it answers "nothing ready".
-        // An eventfd write completes the park immediately, so this only bounds an idle worker.
-        private const int SelectParkWindowMs = 100;
-
-        // Ordinary poll cannot use the deferred IPC path: several NEX titles
-        // exhaust their synchronous-request slots when it is deferred. It also
-        // cannot sleep for a title's full 100 ms while Pia UDP is active,
-        // because both calls share this single BSD service thread. Slice that
-        // wait instead; the guest can issue the remaining poll iterations while
-        // UDP send/receive calls get a chance to run between them.
-        private const int ConcurrentUdpPollSliceMs = 5;
+        private string _lastPollSignature;
 
         private static readonly List<IPollManager> _pollManagers =
         [
@@ -40,6 +31,17 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
         private readonly bool _isPrivileged;
         private bool _loggedConcurrentUdpPollSlicing;
 
+        // How long a select carrying a wakeup event fd parks before it answers "nothing ready".
+        // An eventfd write completes the park immediately, so this only bounds an idle worker.
+        private const int SelectParkWindowMs = 100;
+
+        // A blocking poll with no event fd waits inline on the one Bsd service thread, and every
+        // send and receive of the same process queues behind it. While a datagram socket is open
+        // that queue carries a real-time transport, so the inline wait sleeps in short slices and
+        // lets those calls through between passes.
+        private const int ConcurrentUdpPollSliceMs = 5;
+        private const int IdlePollSliceMs = 50;
+
         public IClient(ServiceCtx context, bool isPrivileged) : base(context.Device.System.BsdServer)
         {
             _isPrivileged = isPrivileged;
@@ -49,14 +51,7 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
         {
             if (errorCode != LinuxError.SUCCESS)
             {
-                // [OpenPak] L'ETIMEDOUT d'une re-verification de sondage differe n'est JAMAIS remis a
-                // l'invite : CompleteReadyDeferredPolls jette la reponse tant que PollResult == 0. Le tracer
-                // produisait des dizaines de milliers de lignes trompeuses (« poll(timeout=-1) a expire », ce
-                // qui est impossible) et, au rythme de re-verification d'une milliseconde, bloquerait le fil
-                // Bsd sur la file bornee du journaliseur — donc etranglerait le transport qu'on accelere.
-                bool discardedDeferredRecheck = errorCode == LinuxError.ETIMEDOUT && context.PollForceNonBlocking;
-
-                if (errorCode != LinuxError.EWOULDBLOCK && !discardedDeferredRecheck)
+                if (errorCode != LinuxError.EWOULDBLOCK)
                 {
                     Logger.Warning?.Print(LogClass.ServiceBsd, $"{operation} failed with error {errorCode}.");
                 }
@@ -582,316 +577,288 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
                 return WriteBsdResult(context, -1, LinuxError.EINVAL);
             }
 
-            PollEvent[] events = new PollEvent[fdsCount];
+            // A deferred re-check reads the pollfd array from the managed snapshot taken when the
+            // poll was parked. The type-0x21 buffer lives in the session's shared pointer region,
+            // which the next bsd IPC overwrites; re-reading it here would parse some later call's
+            // payload as descriptors and wedge the poller on garbage until the game is killed.
+            bool isRecheck = context.PollForceNonBlocking;
+            byte[] snapshot = context.PollInputSnapshot;
 
-            // [OpenPak] Descripteurs morts (fermes) dans un jeu de sondage gRPC : rapportes un par un en
-            // POLLNVAL au lieu de faire echouer tout l'appel avec EBADF. Voir le bloc de decision juste apres
-            // cette boucle.
-            bool[] deadFds = null;
-            int deadFdCount = 0;
+            PollEventData[] inputs = new PollEventData[fdsCount];
+            IFileDescriptor[] descriptors = new IFileDescriptor[fdsCount];
+            bool[] dead = new bool[fdsCount];
+            int deadCount = 0;
 
             for (int i = 0; i < fdsCount; i++)
             {
-                // [OpenPak] Lors d'une re-verification d'un sondage differe, lire le pollfd dans la copie
-                // GEREE prise au moment du report — PAS en memoire invitee. Le tampon de type 0x21 vit dans
-                // la region de pointeurs PARTAGEE de la session, que l'IPC bsd suivant reutilise : on y
-                // relisait le sockaddr d'un connect ulterieur comme des descripteurs -> EBADF sur tout le
-                // sondage -> la boucle d'evenements de gRPC se coincait et le jeu ne quittait jamais son
-                // ecran de chargement. La premiere passe (bloquante) n'a pas de copie et lit l'invite.
-                int pollOff = i * Unsafe.SizeOf<PollEventData>();
-                PollEventData pollEventData = context.PollInputSnapshot != null
-                    ? System.Runtime.InteropServices.MemoryMarshal.Read<PollEventData>(context.PollInputSnapshot.AsSpan(pollOff))
-                    : context.Memory.Read<PollEventData>(inputBufferPosition + (ulong)pollOff);
+                inputs[i] = isRecheck && snapshot != null
+                    ? MemoryMarshal.Read<PollEventData>(snapshot.AsSpan(i * Unsafe.SizeOf<PollEventData>()))
+                    : context.Memory.Read<PollEventData>(inputBufferPosition + (ulong)(i * Unsafe.SizeOf<PollEventData>()));
 
-                IFileDescriptor fileDescriptor = _context.RetrieveFileDescriptor(pollEventData.SocketFd);
+                descriptors[i] = _context.RetrieveFileDescriptor(inputs[i].SocketFd);
 
-                if (fileDescriptor == null)
+                if (descriptors[i] == null)
                 {
-                    // [OpenPak] On le note en POLLNVAL au lieu de faire echouer l'appel entier ici ; le
-                    // choix entre POLLNVAL par descripteur (POSIX/Linux) et EBADF global est tranche plus
-                    // bas, une fois qu'on sait s'il s'agit du sondeur gRPC ou d'un titre NEX.
-                    pollEventData.OutputEvents = PollEventTypeMask.Invalid;
-                    (deadFds ??= new bool[fdsCount])[i] = true;
-                    events[i] = new PollEvent(pollEventData, null);
-
-                    continue;
-                }
-
-                events[i] = new PollEvent(pollEventData, fileDescriptor);
-            }
-
-            // [OpenPak] Un sondage gRPC porte toujours son eventfd de reveil. Le detecter avant de trancher
-            // le sort des descripteurs morts.
-            bool hasEventFdEarly = false;
-            foreach (PollEvent e in events)
-            {
-                if (e.FileDescriptor is EventFileDescriptor)
-                {
-                    hasEventFdEarly = true;
-                    break;
-                }
-            }
-
-            if (deadFds != null)
-            {
-                if (!hasEventFdEarly)
-                {
-                    // Titres NEX (Splatoon 2 / MK8 / SSBU) : garder l'EBADF global d'origine. Leurs boucles
-                    // de sondage sont construites autour et le POLLNVAL par descripteur les avait deja
-                    // regressees — ne pas y toucher.
-                    return WriteBsdResult(context, -1, LinuxError.EBADF);
-                }
-
-                // gRPC : un descripteur ferme dans le jeu de sondage faisait echouer TOUT le sondage avec
-                // EBADF, donc gRPC demolissait le canal et le reconstruisait (cinq cycles de creation /
-                // fermeture de socket, puis abandon). Le poll() de Linux ne fait pas cela : il pose POLLNVAL
-                // dans les revents de cette entree et sert quand meme les autres. Maintenant que les revents
-                // parviennent reellement a l'invite (le chemin differe les perdait), on rapporte POLLNVAL par
-                // descripteur et on continue de sonder les descripteurs vivants.
-                deadFdCount = 0;
-                foreach (bool d in deadFds)
-                {
-                    if (d)
+                    // A descriptor closed while the poll was parked is not a reason to fail the
+                    // whole call on a re-check: POSIX answers POLLNVAL per descriptor and counts
+                    // it as ready, which is also what keeps a parked poll from deferring forever.
+                    if (!isRecheck)
                     {
-                        deadFdCount++;
+                        return WriteBsdResult(context, -1, LinuxError.EBADF);
                     }
+
+                    inputs[i].OutputEvents = PollEventTypeMask.Invalid;
+                    dead[i] = true;
+                    deadCount++;
                 }
             }
 
-            List<PollEvent> discoveredEvents = [];
-            List<PollEvent>[] eventsByPollManager = new List<PollEvent>[_pollManagers.Count];
+            // A title waiting forever on a poll is indistinguishable from one waiting on a server
+            // that never answers, unless the poll says what it wants. Logged when the ask changes;
+            // re-checks repeat the same ask on every pass, so they stay out of the log.
+            if (!isRecheck)
+            {
+                string signature = $"fds={fdsCount}, timeout={timeout}, " + string.Join("; ",
+                    System.Linq.Enumerable.Select(System.Linq.Enumerable.Range(0, fdsCount), i =>
+                    {
+                        string endpoint = descriptors[i] is Impl.ManagedSocket ms && ms.Socket.IsBound
+                            ? ms.Socket.LocalEndPoint?.ToString() ?? "?"
+                            : descriptors[i]?.GetType().Name ?? "closed";
+                        return $"fd {inputs[i].SocketFd} [{endpoint}] wants {inputs[i].InputEvents}";
+                    }));
 
-            for (int i = 0; i < eventsByPollManager.Length; i++)
+                if (signature != _lastPollSignature)
+                {
+                    _lastPollSignature = signature;
+
+                    Logger.Info?.Print(LogClass.ServiceBsd, $"[Bsd] Poll waiting on: {signature}");
+                }
+            }
+
+            // Dispatch the live descriptors to their poll managers.
+            List<PollEvent>[] eventsByPollManager = new List<PollEvent>[_pollManagers.Count];
+            Dictionary<int, int> slotByIndex = new();
+
+            for (int i = 0; i < _pollManagers.Count; i++)
             {
                 eventsByPollManager[i] = [];
-
-                foreach (PollEvent evnt in events)
-                {
-                    if (_pollManagers[i].IsCompatible(evnt))
-                    {
-                        eventsByPollManager[i].Add(evnt);
-                        discoveredEvents.Add(evnt);
-                    }
-                }
             }
 
-            foreach (PollEvent evnt in events)
+            for (int i = 0; i < fdsCount; i++)
             {
-                // [OpenPak] Un descripteur mort ne porte aucun objet : il a deja recu sa reponse POLLNVAL et
-                // n'a pas de gestionnaire de sondage, donc il ne doit pas etre pris pour un type de
-                // descripteur non pris en charge.
-                if (evnt.FileDescriptor == null)
+                if (dead[i])
                 {
                     continue;
                 }
 
-                if (!discoveredEvents.Contains(evnt))
+                PollEvent evnt = new(inputs[i], descriptors[i]);
+                bool compatible = false;
+
+                for (int m = 0; m < _pollManagers.Count; m++)
                 {
-                    Logger.Error?.Print(LogClass.ServiceBsd, $"Poll operation is not supported for {evnt.FileDescriptor.GetType().Name}!");
+                    if (_pollManagers[m].IsCompatible(evnt))
+                    {
+                        eventsByPollManager[m].Add(evnt);
+                        slotByIndex[i] = m;
+                        compatible = true;
+                    }
+                }
+
+                if (!compatible)
+                {
+                    Logger.Error?.Print(LogClass.ServiceBsd,
+                        $"Poll operation is not supported for {descriptors[i].GetType().Name}!");
 
                     return WriteBsdResult(context, -1, LinuxError.EBADF);
                 }
             }
 
-            // [DIAG] Detect a poller that polls its WakeupFd (eventfd) alongside sockets.
-            bool diagHasEventFd = false;
-            foreach (PollEvent e in events)
-            {
-                if (e.FileDescriptor is EventFileDescriptor) { diagHasEventFd = true; break; }
-            }
-            // [OpenPak] Ne tracer que les poll() REELS de l'invite. Les re-verifications d'un sondage differe
-            // (PollForceNonBlocking) sont une boucle interne de l'emulateur : a la periode de re-verification
-            // d'une milliseconde elles produiraient des centaines de milliers de lignes. Le journaliseur est
-            // une file bornee qui BLOQUE son producteur quand elle deborde, et ce producteur est justement le
-            // fil serveur Bsd : les tracer etranglerait le transport qu'on cherche a accelerer.
-            if (diagHasEventFd && !context.PollForceNonBlocking)
-            {
-                Logger.Info?.Print(LogClass.ServiceBsd, $"[DIAG] Poll with eventfd: {fdsCount} fds, timeout={timeout}");
-            }
-
-            int updateCount = 0;
+            int readyCount = deadCount;
 
             LinuxError errno = LinuxError.SUCCESS;
 
+            bool hasEventFd = false;
+
+            for (int i = 0; i < fdsCount; i++)
+            {
+                hasEventFd |= descriptors[i] is Impl.EventFileDescriptor;
+            }
+
+            // One non-blocking pass. Nothing here ever sleeps: a poll that would block on a
+            // wakeup event fd is parked by the server loop instead, so the single Bsd thread
+            // stays free to process the very write that would end the wait.
             if (fdsCount != 0)
             {
-                static bool IsUnexpectedLinuxError(LinuxError error)
+                for (int m = 0; m < _pollManagers.Count; m++)
                 {
-                    return error is not LinuxError.SUCCESS and not LinuxError.ETIMEDOUT;
+                    if (eventsByPollManager[m].Count == 0)
+                    {
+                        continue;
+                    }
+
+                    errno = _pollManagers[m].Poll(eventsByPollManager[m], 0, out int updateCount);
+
+                    // Every pass here probes with a zero timeout, so a manager that found nothing
+                    // reports ETIMEDOUT. That is "no descriptor ready", not a failure: a poll that
+                    // runs out of time answers 0 with no errno. Handing the guest -1/ETIMEDOUT
+                    // instead reads as a dead connection to a UDP transport that polls between
+                    // every receive, and it tears the session down.
+                    if (errno == LinuxError.ETIMEDOUT)
+                    {
+                        errno = LinuxError.SUCCESS;
+                    }
+
+                    if (errno is not (LinuxError.SUCCESS or LinuxError.ETIMEDOUT))
+                    {
+                        break;
+                    }
+
+                    readyCount += updateCount;
                 }
 
-                if (diagHasEventFd)
+                // Copy the revents the managers wrote back onto the entries the response carries.
+                for (int m = 0; m < _pollManagers.Count; m++)
                 {
-                    // [OpenPak] Deferred Bsd Poll — ONLY when an eventfd is polled alongside
-                    // its sockets. Do exactly ONE non-blocking pass; never block the
-                    // single Bsd server thread here, or the eventfd Write that must be issued on that
-                    // same thread to make this very poll ready would deadlock. Either return a genuine
-                    // result now, or DEFER the IPC reply and let the ServerBase loop re-check us later.
-                    //
-                    // [OpenPak] Evaluer CHAQUE gestionnaire de sondage et ACCUMULER — ne pas s'arreter au
-                    // premier qui rapporte quelque chose. gRPC sonde [eventfd, socket] ensemble, mais les deux
-                    // sont repartis sur des gestionnaires differents (_pollManagers[0] = eventfd,
-                    // [1] = socket). L'ancien « if (updateCount > 0) break; » s'arretait au gestionnaire
-                    // eventfd des que celui-ci etait lisible, donc le gestionnaire socket ne tournait jamais
-                    // et le POLLOUT d'un connect asynchrone TERMINE n'etait jamais rapporte. gRPC n'appelait
-                    // alors jamais getsockopt(SO_ERROR) pour clore le connect -> EINPROGRESS bloque -> delai
-                    // de 20 s -> abandon de la couche reseau du jeu, apres une tempete de sondages. Faire
-                    // tourner les deux gestionnaires a chaque passe laisse le POLLOUT du socket remonter a
-                    // cote du reveil eventfd.
-                    int accumUpdate = 0;
-                    bool hadUnexpected = false;
-                    for (int i = 0; i < eventsByPollManager.Length; i++)
+                    foreach (PollEvent evnt in eventsByPollManager[m])
                     {
-                        if (eventsByPollManager[i].Count == 0)
+                        for (int i = 0; i < fdsCount; i++)
                         {
-                            continue;
-                        }
-
-                        errno = _pollManagers[i].Poll(eventsByPollManager[i], 0, out updateCount);
-
-                        if (IsUnexpectedLinuxError(errno))
-                        {
-                            hadUnexpected = true;
-                            break;
-                        }
-
-                        accumUpdate += updateCount;
-                    }
-
-                    if (!hadUnexpected)
-                    {
-                        // [OpenPak] POSIX compte une entree POLLNVAL comme un descripteur pret : les
-                        // descripteurs morts contribuent donc a la valeur de retour, et c'est aussi ce qui
-                        // empeche ce sondage de rester differe indefiniment.
-                        updateCount = accumUpdate + deadFdCount;
-                        errno = updateCount > 0 ? LinuxError.SUCCESS : LinuxError.ETIMEDOUT;
-                    }
-
-                    context.PollResult = updateCount;
-
-                    // [OpenPak] Vider l'eventfd de reveil qu'on rapporte lisible, pour le rendre a front
-                    // montant. gRPC ecrit dans son eventfd de reveil mais n'emet jamais le read() qui le
-                    // consomme ici (aucune commande Read observee ; la valeur de l'eventfd montait sans fin),
-                    // donc le descripteur restait lisible en permanence : le sondeur tournait sur le reveil et
-                    // n'avancait jamais jusqu'a traiter le socket deja connecte -> le connect ne se terminait
-                    // pas -> abandon sur delai. En vidant ici, le reveil est signale une fois par coup de
-                    // semonce puis efface, si bien qu'un sondage suivant peut rapporter le POLLOUT du socket
-                    // seul et laisser gRPC finir son connect. Restreint aux sondages porteurs d'un eventfd
-                    // (cette branche), donc sans effet sur les sondages eventfd ordinaires.
-                    if (updateCount > 0)
-                    {
-                        Span<byte> drainTmp = stackalloc byte[8];
-                        foreach (PollEvent pe in events)
-                        {
-                            if (pe.FileDescriptor is EventFileDescriptor efd &&
-                                pe.Data.OutputEvents.HasFlag(PollEventTypeMask.Input))
+                            if (inputs[i].SocketFd == evnt.Data.SocketFd && !dead[i])
                             {
-                                efd.Read(out _, drainTmp);
+                                inputs[i] = evnt.Data;
                             }
                         }
                     }
+                }
 
-                    if (updateCount == 0 && timeout != 0 && !context.PollForceNonBlocking)
+                // Drain readable event fds. gRPC writes its wakeup fd and never reads it; without
+                // the drain the fd stays readable forever and the poller spins on it instead of
+                // ever reaching the connected socket.
+                for (int i = 0; i < fdsCount; i++)
+                {
+                    if (descriptors[i] is Impl.EventFileDescriptor eventFd &&
+                        inputs[i].OutputEvents.HasFlag(PollEventTypeMask.Input))
                     {
-                        context.PollDeferRequested = true;
-                        context.PollDeadlineMs = (timeout == -1)
-                            ? long.MaxValue
-                            : PerformanceCounter.ElapsedMilliseconds + timeout;
-
-                        // [OpenPak] Figer le tableau pollfd en memoire geree pour que chaque re-verification
-                        // relise CES descripteurs, et non ce qu'un IPC bsd ulterieur a ecrit depuis dans la
-                        // region de pointeurs invitee partagee. On recopie depuis les evenements deja
-                        // analyses (SocketFd + InputEvents) ; aucun acces a l'invite.
-                        byte[] snap = new byte[fdsCount * Unsafe.SizeOf<PollEventData>()];
-                        for (int j = 0; j < fdsCount; j++)
-                        {
-                            System.Runtime.InteropServices.MemoryMarshal.Write(snap.AsSpan(j * Unsafe.SizeOf<PollEventData>()), events[j].Data);
-                        }
-                        context.PollInputSnapshot = snap;
-
-                        Logger.Info?.Print(LogClass.ServiceBsd, $"[DIAG] Poll DEFERRED (timeout={timeout}) - freeing Bsd thread for eventfd Write IPC");
-
-                        // Return WITHOUT writing a response. ServerBase.Process sees PollDeferRequested
-                        // and registers a DeferredPoll instead of replying.
-                        return ResultCode.Success;
+                        eventFd.Read(out _, Span<byte>.Empty);
                     }
                 }
-                else
-                {
-                    // [OpenPak beta] NEX games (Splatoon 2 / MK8 Deluxe / SSBU) issue an ordinary
-                    // BLOCKING poll while their async connect completes. They have no eventfd, so the
-                    // eventfd-only deferred path above must NOT apply to them — deferring their poll broke
-                    // the IPC (SendSyncRequest -> OutOfResource -> the game aborts on connect). Keep this
-                    // path synchronous, but bound each wait while a UDP transport shares the BSD thread.
-                    int effectiveTimeout = timeout;
+            }
 
-                    if (_context.HasDatagramSocket &&
-                        (timeout == -1 || timeout > ConcurrentUdpPollSliceMs))
+            // On a re-check the server loop decides: ready, or deadline passed. Either way the
+            // answer goes out with the count as it stands.
+            if (isRecheck)
+            {
+                context.PollResult = readyCount;
+
+                WriteOutputs(context, fdsCount, outputBufferPosition, inputs);
+
+                return WriteBsdResult(context, readyCount, errno);
+            }
+
+            if (readyCount > 0 || timeout == 0 || fdsCount == 0)
+            {
+                WriteOutputs(context, fdsCount, outputBufferPosition, inputs);
+
+                return WriteBsdResult(context, readyCount, errno);
+            }
+
+            // This poll would block, and it carries a wakeup event fd: park it. The server loop
+            // re-runs it non-blocking from the snapshot whenever the fd or the deadline moves;
+            // replying here would pin the single Bsd thread inside our own wait, and the eventfd
+            // write that ends the wait could then never be processed. Polls without an event fd
+            // have no such external waker and keep waiting inline, as they always have.
+            if (hasEventFd)
+            {
+                context.PollDeferRequested = true;
+                context.PollDeadlineMs = (timeout == -1)
+                    ? long.MaxValue
+                    : PerformanceCounter.ElapsedMilliseconds + timeout;
+
+                byte[] snap = new byte[fdsCount * Unsafe.SizeOf<PollEventData>()];
+
+                for (int j = 0; j < fdsCount; j++)
+                {
+                    MemoryMarshal.Write(snap.AsSpan(j * Unsafe.SizeOf<PollEventData>()), in inputs[j]);
+                }
+
+                context.PollInputSnapshot = snap;
+
+                Logger.Info?.Print(LogClass.ServiceBsd,
+                    $"[Bsd] Poll deferred (timeout={timeout}) - freeing the Bsd thread for eventfd writes");
+
+                return ResultCode.Success;
+            }
+
+            long budgetLeftMilliseconds = PerformanceCounter.ElapsedMilliseconds +
+                (timeout == -1 ? uint.MaxValue : timeout);
+
+            do
+            {
+                for (int m = 0; m < _pollManagers.Count; m++)
+                {
+                    if (eventsByPollManager[m].Count == 0)
                     {
-                        effectiveTimeout = ConcurrentUdpPollSliceMs;
+                        continue;
+                    }
+
+                    errno = _pollManagers[m].Poll(eventsByPollManager[m], 0, out int updateCount);
+
+                    // Every pass here probes with a zero timeout, so a manager that found nothing
+                    // reports ETIMEDOUT. That is "no descriptor ready", not a failure: a poll that
+                    // runs out of time answers 0 with no errno. Handing the guest -1/ETIMEDOUT
+                    // instead reads as a dead connection to a UDP transport that polls between
+                    // every receive, and it tears the session down.
+                    if (errno == LinuxError.ETIMEDOUT)
+                    {
+                        errno = LinuxError.SUCCESS;
+                    }
+
+                    if (errno is not (LinuxError.SUCCESS or LinuxError.ETIMEDOUT))
+                    {
+                        break;
+                    }
+
+                    if (updateCount > 0)
+                    {
+                        readyCount += updateCount;
+                        break;
+                    }
+                }
+
+                if (readyCount == 0)
+                {
+                    int sliceMs = IdlePollSliceMs;
+
+                    if (_context.HasDatagramSocket)
+                    {
+                        sliceMs = ConcurrentUdpPollSliceMs;
 
                         if (!_loggedConcurrentUdpPollSlicing)
                         {
                             _loggedConcurrentUdpPollSlicing = true;
+
                             Logger.Info?.Print(LogClass.ServiceBsd,
-                                $"Slicing blocking poll from {timeout} ms to {effectiveTimeout} ms while UDP is active");
+                                $"[Bsd] Blocking poll (timeout={timeout}) sleeps in {sliceMs} ms slices while a datagram socket is open");
                         }
                     }
 
-                    for (int i = 0; i < eventsByPollManager.Length; i++)
-                    {
-                        if (eventsByPollManager[i].Count == 0)
-                        {
-                            continue;
-                        }
-
-                        errno = _pollManagers[i].Poll(eventsByPollManager[i], effectiveTimeout, out updateCount);
-
-                        if (IsUnexpectedLinuxError(errno))
-                        {
-                            break;
-                        }
-
-                        if (updateCount > 0)
-                        {
-                            break;
-                        }
-                    }
+                    context.Device.System.KernelContext.Syscall.SleepThread(sliceMs * 1000000L);
+                    context.Thread.HandlePostSyscall();
                 }
             }
-            else if (timeout == -1)
-            {
-                // FIXME: If we get a timeout of -1 and there is no fds to wait on, this should kill the KProcess. (need to check that with re)
-                throw new InvalidOperationException();
-            }
-            else
-            {
-                context.Device.System.KernelContext.Syscall.SleepThread(timeout);
-            }
+            while (readyCount == 0 && context.Thread.Context.Running && PerformanceCounter.ElapsedMilliseconds < budgetLeftMilliseconds);
 
-            // [OpenPak] N'ecrire les revents en memoire invitee que lorsqu'on rend vraiment un resultat : un
-            // descripteur est pret (updateCount > 0), ou bien il s'agit d'un sondage normal bloquant / a coup
-            // unique (pas d'une re-verification differee). Sur une re-verification differee encore infructueuse
-            // il ne FAUT pas ecrire : le tampon de sortie se trouve dans la region de pointeurs partagee qu'un
-            // IPC bsd ulterieur est peut-etre en train d'utiliser, et l'ecraser corrompt cet IPC (par exemple
-            // le sockaddr d'un connect, ce qui se solde par un echec d'authentification). Quand le sondage
-            // aboutit enfin, ce bloc s'execute et l'invite lit des revents frais juste apres la reponse.
-            if (updateCount > 0 || !context.PollForceNonBlocking)
-            {
-                // TODO: Spanify
-                for (int i = 0; i < fdsCount; i++)
-                {
-                    context.Memory.Write(outputBufferPosition + (ulong)(i * Unsafe.SizeOf<PollEventData>()), events[i].Data);
-                }
-            }
+            WriteOutputs(context, fdsCount, outputBufferPosition, inputs);
 
-            // In case of non blocking call timeout should not be returned.
-            if (timeout == 0 && errno == LinuxError.ETIMEDOUT)
-            {
-                errno = LinuxError.SUCCESS;
-            }
+            return WriteBsdResult(context, readyCount, errno);
+        }
 
-            return WriteBsdResult(context, updateCount, errno);
+        private static void WriteOutputs(ServiceCtx context, int fdsCount, ulong outputBufferPosition, PollEventData[] inputs)
+        {
+            for (int i = 0; i < fdsCount; i++)
+            {
+                context.Memory.Write(outputBufferPosition + (ulong)(i * Unsafe.SizeOf<PollEventData>()), inputs[i]);
+            }
         }
 
         [CommandCmif(7)]
@@ -1205,28 +1172,11 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
 
             if (socket != null)
             {
-                // [OpenPak] Se PREMUNIR contre un tampon sockaddr nul ou trop court au lieu de planter :
-                // une fois la resolution de noms reparee, le client gRPC atteint un chemin de connect qui
-                // passait pos=0 / une taille inferieure a la structure, et Read<BsdSockAddr> faisait tomber
-                // l'emulateur sur une reference nulle. On rend EINVAL, comme le ferait le systeme.
-                if (bufferPosition == 0 || bufferSize < (ulong)Unsafe.SizeOf<BsdSockAddr>())
-                {
-                    return WriteBsdResult(context, -1, LinuxError.EINVAL);
-                }
+                IPEndPoint endPoint = context.Memory.Read<BsdSockAddr>(bufferPosition).ToIPEndPoint();
 
-                try
-                {
-                    IPEndPoint endPoint = context.Memory.Read<BsdSockAddr>(bufferPosition).ToIPEndPoint();
+                errno = socket.Connect(endPoint);
 
-                    errno = socket.Connect(endPoint);
-
-                    Logger.Info?.Print(LogClass.ServiceBsd, $"Connect(fd {socketFd}) -> {endPoint} = {errno}");
-                }
-                catch (Exception)
-                {
-                    // Lecture impossible a cette adresse : EFAULT, jamais une exception qui remonte.
-                    errno = LinuxError.EFAULT;
-                }
+                Logger.Info?.Print(LogClass.ServiceBsd, $"Connect(fd {socketFd}) -> {endPoint} = {errno}");
             }
 
             return WriteBsdResult(context, 0, errno);
@@ -1314,7 +1264,12 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
                 }
             }
 
-            return WriteBsdResult(context, 0, errno);
+            WriteBsdResult(context, 0, errno);
+            // The guest also receives the option length in the IPC response.
+            // Leaving it unwritten makes a successful SO_ERROR read look invalid.
+            context.ResponseData.Write(errno == LinuxError.SUCCESS ? (uint)bufferSize : 0u);
+
+            return ResultCode.Success;
         }
 
         [CommandCmif(18)]
@@ -1490,9 +1445,6 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
             IFileDescriptor file = _context.RetrieveFileDescriptor(fd);
             int result = -1;
 
-            // [DIAG] Capture every Write IPC — especially a resolver's kick of its eventfd WakeupFd.
-            Logger.Info?.Print(LogClass.ServiceBsd, $"[DIAG] Write IPC fd={fd} size={sendSize} type={file?.GetType().Name}");
-
             if (file != null)
             {
                 errno = file.Write(out result, sendBuffer);
@@ -1502,6 +1454,11 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
                     SetResultErrno(file, result);
                 }
             }
+
+            // The wakeup of a waiting poller is a write to an event fd; when a title freezes on
+            // a poll, this line is what tells whether the kick was ever swung.
+            Logger.Info?.Print(LogClass.ServiceBsd,
+                $"[Bsd] Write: fd {fd} ({file?.GetType().Name ?? "unknown"}), {sendSize} bytes, result {result}, errno {errno}");
 
             return WriteBsdResult(context, result, errno);
         }
@@ -1540,6 +1497,10 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
         public ResultCode Close(ServiceCtx context)
         {
             int fd = context.RequestData.ReadInt32();
+
+            IFileDescriptor closing = _context.RetrieveFileDescriptor(fd);
+
+            Logger.Info?.Print(LogClass.ServiceBsd, $"[Bsd] Close: fd {fd} ({closing?.GetType().Name ?? "unknown"})");
 
             LinuxError errno = LinuxError.EBADF;
 
@@ -1677,6 +1638,9 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd
             LinuxError errno = LinuxError.SUCCESS;
 
             int newSockFd = _context.RegisterFileDescriptor(newEventFile);
+
+            Logger.Info?.Print(LogClass.ServiceBsd,
+                $"[Bsd] EventFd created as fd {newSockFd} (flags: {flags}, initial: {initialValue})");
 
             if (newSockFd == -1)
             {

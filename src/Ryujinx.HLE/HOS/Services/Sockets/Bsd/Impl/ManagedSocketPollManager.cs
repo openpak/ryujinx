@@ -117,17 +117,14 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Impl
                     {
                         outputEvents |= PollEventTypeMask.Error;
 
-                        // POSIX may report an ICMP port-unreachable error for a UDP
-                        // hole-punch probe. A datagram socket is never "connected"
-                        // in the managed sense, but that is not a peer disconnect
-                        // and must not be exposed to Pia as POLLHUP: during NAT
-                        // traversal the first probes routinely land on a
-                        // still-closed port, and treating that as a disconnect
-                        // kills the mesh join (Mario Golf: join dies, host hangs,
-                        // joiner gets EndParticipation). Ported from
-                        // ExternalReference/Ryujinx-Reference PR #28.
-                        if (socket.SocketType == SocketType.Stream &&
-                            (!socket.Connected || !socket.IsBound))
+                        // Hang-up is a stream notion. A datagram socket has no peer to lose: the
+                        // pending error is usually an ICMP unreachable from a probe that landed on
+                        // a port nobody has opened yet, which is exactly what NAT traversal looks
+                        // like for its first few packets. Reporting it as POLLHUP makes the guest
+                        // drop the mesh it is still building, so only streams get the flag.
+                        bool isStream = socket.SocketType == SocketType.Stream;
+
+                        if (isStream && (!socket.Connected || !socket.IsBound))
                         {
                             outputEvents |= PollEventTypeMask.Disconnected;
                         }

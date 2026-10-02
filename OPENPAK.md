@@ -9,8 +9,12 @@ lives in the networking layer and the surrounding UI.
 `legacy/Ryujinx-Reference` is licensed **PolyForm Shield 1.0.0**, whose Noncompete
 clause bars using the software to provide a product competing with the licensor's — which is
 what OpenPak is. Its Ryujinx core is still MIT and could be taken, but that part is upstream
-anyway. So: upstream base, OpenPak layer written here. Reference builds are a source of
+anyway. So: upstream base, OpenPak layer written here. Reference builds were to be a source of
 *observed behavior* only (what a title asks for, which host, which error code), never code.
+Two exceptions broke that and are not resolved: the deferred-poll `IClient`
+(`src/Ryujinx.HLE/HOS/Services/Sockets/Bsd/IClient.cs`, 3ab97fbe7, ported wholesale from
+Ryujinx-Reference) and the datagram POLLHUP check in `Impl/ManagedSocketPollManager.cs`
+(081d5cd88, from Ryujinx-Reference PR #28). Their licence status has not been established.
 
 Upstream is `upstream` (`git.ryujinx.app`); `origin` is `openpak/ryujinx`.
 
